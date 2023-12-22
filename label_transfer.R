@@ -12,26 +12,15 @@ load_atac <- function(directory_path){
     barcode_fn <- file.path(directory_path, "barcodes.tsv")
     peaks_fn <- file.path(directory_path, "peak.bed")
     matrix_fn<- file.path(directory_path, "matrix.mtx")
-
-
     # Load the data files
     barcodes <- read.table(barcode_fn, sep = "\t", header = FALSE)
     peaks <- read.table(peaks_fn, sep = "\t", check.names=FALSE)
     frag_matrix <- readMM(matrix_fn)
-
-    # Remove the extra row from the matrix
-    #frag_matrix <- frag_matrix[-nrow(frag_matrix), ]
     # Set the row names for the matrix from the peaks object
     rownames(frag_matrix) <- peaks$V1
-
-    # Subset the barcodes to match the cells in the matrix
-    #barcodes <- barcodes[barcodes$V1 %in% colnames(frag_matrix), , drop = FALSE]
     # Set the column names for the matrix
     colnames(frag_matrix) <- barcodes$V1
 
-    # Create a Seurat object
-    #seuratObj <- CreateSeuratObject(counts = frag_matrix, meta.data = barcodes, features = peaks)
-    #return (seuratObj)
     return (frag_matrix)
 }
 
@@ -84,18 +73,6 @@ data.atac <- FindTopFeatures(data.atac, min.cutoff = "q0")
 data.atac <- RunSVD(data.atac)
 data.atac <- RunUMAP(data.atac, reduction = "lsi", dims = 2:30, reduction.name = "umap.atac", reduction.key = "atacUMAP_")
 
-# plotting
-#p1 <- DimPlot(data.rna, group.by = "celltype", label = TRUE) + NoLegend() + ggtitle("RNA")
-#p2 <- DimPlot(data.atac, group.by = "orig.ident", label = FALSE) + NoLegend() + ggtitle("ATAC")
-#p1 + p2
-#plot <- (p1 + p2) & xlab("UMAP 1") & ylab("UMAP 2") & theme(axis.title = element_text(size = 18))
-#ggsave(filename = "../output/images/atacseq_integration_vignette.png", height = 7, width = 12, plot = plot, quality = 50)
-#
-
-
-#new_cell_names = colnames(data.rna)[1:8045]
-#new.data.atac <- RenameCells(data.atac, new.names = new_cell_names)
-
 data.atac <- readRDS('data.atac.rds')
 
 # Identifying anchors between scRNA-seq and scATAC-seq datasets
@@ -114,15 +91,11 @@ data.atac <- ScaleData(data.atac, features = rownames(data.atac))
 # Identify anchors
 transfer.anchors <- FindTransferAnchors(reference = data.rna, query = data.atac, features = VariableFeatures(object = data.rna),reference.assay = "RNA", query.assay = "ACTIVITY", reduction = "cca")
 
-#saveRDS(data.atac, 'merged.atac.rds')
-#data.atac = readRDS('merged.atac.rds')
-
 # Annotate scATAC-seq cells via label transfer
-celltype.predictions <- TransferData(anchorset = transfer.anchors, refdata = data.rna$seurat_annotations, weight.reduction = data.atac[["lsi"]], dims = 2:30)
+celltype.predictions <- TransferData(anchorset = transfer.anchors, refdata = data.rna@meta.data$celltype, weight.reduction = data.atac[["lsi"]], dims = 2:30)
 data.atac <- AddMetaData(data.atac, metadata = celltype.predictions)
 
 # Do not check is annotation is correct
-#data.atac$annotation_correct <- data.atac$predicted.id == data.atac$seurat_annotations
 
 saveRDS(data.atac, 'merged.atac.rds')
 
