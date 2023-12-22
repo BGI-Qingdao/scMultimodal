@@ -54,7 +54,6 @@ data.atac <- NormalizeData(data.atac)
 data.atac <- ScaleData(data.atac)
 
 # ATAC analysis add gene annotation information
-gff_fn = '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/DATA/01.Lethenteron/atac/LRfinal.gff3'
 gff_fn = '/dellfsqd1/ST_OCEAN/C_OCEAN/USERS/c-zhangjin/07.project/5.liver_ATAC/0.qc/1.input_gem/LRfinal.gff3'
 gff = rtracklayer::import.gff(gff_fn)
 gene_gff = gff[gff$type=='gene']
