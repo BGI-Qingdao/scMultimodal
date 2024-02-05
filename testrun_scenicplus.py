@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 # @Date: Created on 18 Dec 2023 16:58
 # @Author: Yao LI
-# @File: evo_fish/scenicplus.py
+# @File: evo_fish/testrun_scenicplus.py
 import os
 import sys
+import time
 import scanpy as sc
 import numpy as np
 from pycisTopic.utils import (
@@ -14,6 +15,13 @@ from pycisTopic.utils import (
 import pyranges as pr
 import pandas as pd
 from pycisTopic.pseudobulk_peak_calling import export_pseudobulk, export_pseudobulk_one_sample
+import dill
+import warnings
+
+warnings.filterwarnings("ignore")
+
+
+# Set stderr to null to avoid strange messages from ray
 
 
 def get_chromsizes(size_fn):
@@ -174,6 +182,7 @@ def preprocess(adata1):
 
 
 if __name__ == '__main__':
+    print('Starting...')
     # scRNA-seq
     scrna_dir = '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/DATA/01.Lethenteron/scrna'
     fn1 = 'a_liver.h5ad'
@@ -192,9 +201,9 @@ if __name__ == '__main__':
     cell_data['barcode'] = list(cell_data.index)
     cell_data['barcode'] = cell_data['barcode'].astype(str)
     # set data type of the celltype column to str, otherwise the export_pseudobulk function will complain.
-    transfered_labels = pd.read_csv('/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/label_transfered_cell_data.csv', index_col=0)
+    transfered_labels = pd.read_csv(
+        '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/label_transfered_cell_data.csv', index_col=0)
     cell_data['celltype'] = transfered_labels['predicted.id']
-
 
     # ATAC-seq fragments
     fragment_fn = '/dellfsqd1/ST_OCEAN/C_OCEAN/USERS/c-zhangjin/07.project/5.liver_ATAC/0.qc/QC/lsqsm-youti-gan-2_1/output/lsqsm-youti-gan-2_1.fragments.tsv.gz'
@@ -252,7 +261,9 @@ if __name__ == '__main__':
 
     # ------------------------------------------------
     from pycisTopic.pseudobulk_peak_calling import peak_calling
+
     macs_path = 'macs2'
+    # ------------------------------------------------
     # Run peak calling
     # ------------------------------------------------
     # sys.stderr = open(os.devnull, "w")  # silence stderr
@@ -302,7 +313,8 @@ if __name__ == '__main__':
     # ------------------------------------------------
     # generate a binary count matrix of ATAC-seq fragments over consensus peaks.
     # This matrix, along with metadata, will be stored in a cisTopic object and be used for topic modeling.
-    path_to_regions = {'a_liver': '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/consensus_regions.bed'}
+    path_to_regions = {
+        'a_liver': '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/consensus_regions.bed'}
 
     # from pycisTopic.cistopic_class import *
     # cistopic_obj = create_cistopic_object_from_fragments(
@@ -326,12 +338,12 @@ if __name__ == '__main__':
     # pickle.dump(cistopic_obj,open(os.path.join(work_dir, 'atac/cistopic_obj_models_500_iter_LDA.pkl'), 'wb'))
     # cistopic_obj = pickle.load(open(os.path.join(work_dir, 'atac/cistopic_obj_models_500_iter_LDA.pkl'), 'rb'))
 
-
     # Run topic modeling. The purpose of this is twofold:
-    #To find sets of co-accessible regions (topics), this will be used downstream as candidate enhancers
+    # To find sets of co-accessible regions (topics), this will be used downstream as candidate enhancers
     # (together with Differentially Accessible Regions (DARs)).
-    #To impute dropouts.
+    # To impute dropouts.
     from pycisTopic.cistopic_class import *
+
     # models = run_cgs_models(cistopic_obj,
     #                         n_topics=[2, 4, 10, 16, 32, 48],
     #                         n_cpu=5,
@@ -349,9 +361,9 @@ if __name__ == '__main__':
     #             open(os.path.join(work_dir, 'atac/models/a_liver_youti_2_1.pkl'), 'wb'))
     models = pickle.load(open(os.path.join(work_dir, 'atac/models/a_liver_youti_2_1.pkl'), 'rb'))
 
-
-    # Analyze models.
-    # 要做吗
+    # ------------------------------------------------
+    # Analyze models
+    # ------------------------------------------------
     from pycisTopic.lda_models import *
     # model = evaluate_models(models,
     #                         select_model=16,
@@ -361,25 +373,114 @@ if __name__ == '__main__':
     # cistopic_obj.add_LDA_model(model)
     # pickle.dump(cistopic_obj,
     #             open(os.path.join(work_dir, 'atac/cistopic_obj.pkl'), 'wb'))
-    cistopic_obj = pickle.load(open(os.path.join(work_dir, 'atac/cistopic_obj.pkl'), 'rb'))
-    cistopic_obj.add_cell_data(cell_data)
-    print(cistopic_obj.cell_data)
+    # cistopic_obj = pickle.load(open(os.path.join(work_dir, 'atac/cistopic_obj.pkl'), 'rb'))
+    # cistopic_obj.add_cell_data(cell_data)
+    # print(cistopic_obj.cell_data)
+    # pickle.dump(cistopic_obj,
+    #             open(os.path.join(work_dir, 'atac/cistopic_obj.pkl'), 'wb'))
 
     # Visualization
     from pycisTopic.clust_vis import *
+    # run_umap(cistopic_obj, target='cell', scale=True)
+    # plot_metadata(cistopic_obj, reduction_name='UMAP', variables=['celltype'], save=os.path.join(work_dir, 'figs/fig1'))
+    # plot_topic(cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(work_dir, 'figs/fig2'))
 
-    run_umap(cistopic_obj, target='cell', scale=True)
-    plot_metadata(cistopic_obj, reduction_name='UMAP', variables=['celltype'], save=os.path.join(work_dir, 'figs/fig1'))
-    plot_topic(cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(work_dir, 'figs/fig2'))
+    # correct this kind of batch effects
+    # Harmony
+    # harmony(cistopic_obj, 'sample_id', random_state=555)
+    # # UMAP
+    # run_umap(cistopic_obj, reduction_name='harmony_UMAP',
+    #          target='cell', harmony=True)
+    # run_tsne(cistopic_obj, reduction_name='harmony_tSNE',
+    #          target='cell', harmony=True)
+    # Plot again
+    # run_umap(cistopic_obj, target='cell', scale=True)
+    # plot_metadata(cistopic_obj, reduction_name='UMAP', variables=['celltype'], save=os.path.join(work_dir, 'figs/fig1'))
+    # plot_topic(cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(work_dir, 'figs/fig2'))
 
+    # cell_topic_heatmap(cistopic_obj,
+    #                    variables=['celltype'],
+    #                    scale=False,
+    #                    legend_loc_x=1.05,
+    #                    legend_loc_y=-1.2,
+    #                    legend_dist_y=-1,
+    #                    figsize=(10, 20),
+    #                    save=work_dir + 'figs/heatmap_topic_contr.pdf')
+
+    # ------------------------------------------------
     # Inferring candidate enhancer regions
+    # ------------------------------------------------
+    from pycisTopic.topic_binarization import *
 
+    # region_bin_topics_otsu = binarize_topics(cistopic_obj, method='otsu', save=work_dir + 'figs/otsu.pdf')
+    # region_bin_topics_top3k = binarize_topics(cistopic_obj, method='ntop', ntop=3000, save=work_dir + 'figs/top3k.pdf')
+    # binarized_cell_topic = binarize_topics(cistopic_obj, target='cell', method='li', plot=True, num_columns=5,
+    #                                        nbins=100, save=work_dir + 'figs/cell_topic.pdf')
 
+    # from pycisTopic.diff_features import *
+    # imputed_acc_obj = impute_accessibility(cistopic_obj, selected_cells=None, selected_regions=None,scale_factor=10 ** 6)
+    # normalized_imputed_acc_obj = normalize_scores(imputed_acc_obj, scale_factor=10 ** 4)
+    # variable_regions = find_highly_variable_features(normalized_imputed_acc_obj, plot=False)
+    # markers_dict = find_diff_features(cistopic_obj, imputed_acc_obj, variable='celltype', var_features=variable_regions,split_pattern='-')
+    #
+    # if not os.path.exists(os.path.join(work_dir, 'atac/candidate_enhancers')):
+    #     os.makedirs(os.path.join(work_dir, 'atac/candidate_enhancers'))
+    # pickle.dump(region_bin_topics_otsu,
+    #             open(os.path.join(work_dir, 'atac/candidate_enhancers/region_bin_topics_otsu.pkl'), 'wb'))
+    # pickle.dump(region_bin_topics_top3k,
+    #             open(os.path.join(work_dir, 'atac/candidate_enhancers/region_bin_topics_top3k.pkl'), 'wb'))
+    # pickle.dump(markers_dict, open(os.path.join(work_dir, 'atac/candidate_enhancers/markers_dict.pkl'), 'wb'))
 
+    # ------------------------------------------------
+    # Motif enrichment analysis using pycistarget
+    # ------------------------------------------------
+    # 1. Convert to dictionary of pyranges objects.
+    region_bin_topics_otsu = pickle.load(
+        open(os.path.join(work_dir, 'atac/candidate_enhancers/region_bin_topics_otsu.pkl'), 'rb'))
+    region_bin_topics_top3k = pickle.load(
+        open(os.path.join(work_dir, 'atac/candidate_enhancers/region_bin_topics_top3k.pkl'), 'rb'))
+    markers_dict = pickle.load(
+        open(os.path.join(work_dir, 'atac/candidate_enhancers/markers_dict.pkl'), 'rb'))
 
+    from pycistarget.utils import region_names_to_coordinates
+    # region_sets = {}
+    # region_sets['topics_otsu'] = {}
+    # region_sets['DARs_region_bin_topics_top3k'] = {}
+    # region_sets['DARs_markers_dict'] = {}
+    # for topic in region_bin_topics_otsu.keys():
+    #     regions = region_bin_topics_otsu[topic].index[
+    #         region_bin_topics_otsu[topic].index.str.startswith('Hic_chr')]  # only keep regions on known chromosomes
+    #     region_sets['topics_otsu'][topic] = pr.PyRanges(region_names_to_coordinates(regions))
+    # for DAR in region_bin_topics_top3k.keys():
+    #     regions = region_bin_topics_top3k[DAR].index[
+    #         region_bin_topics_top3k[DAR].index.str.startswith('Hic_chr')]  # only keep regions on known chromosomes
+    #     region_sets['DARs_region_bin_topics_top3k'][DAR] = pr.PyRanges(region_names_to_coordinates(regions))
+    # for DAR in markers_dict.keys():  # TODO: why there are empty dataframes
+    #     if not markers_dict[DAR].empty:
+    #         regions = markers_dict[DAR].index[
+    #             markers_dict[DAR].index.str.startswith('Hic_chr')]  # only keep regions on known chromosomes
+    #         region_sets['DARs_markers_dict'][DAR] = pr.PyRanges(region_names_to_coordinates(regions))
+    # # for key in region_sets.keys():
+    #     print(f'{key}: {region_sets[key].keys()}')
 
-
+    # 2. CUSTOM DATABASE
+    # db_fpath = "/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/00.custom"
+    # # 2.1. make custom scoring database (feather)
+    # # scores_db = os.path.join(db_fpath, 'Lethenteron.regions_vs_motifs.scores.feather') # peaks from ATAC data analysis by ? software
+    # scores_db = os.path.join(db_fpath, 'Lethenteron.no_name.regions_vs_motifs.scores.feather')  # consensus peaks from previous step
+    # # 2.2. make custom ranking database (feather)
+    # # rankings_db = os.path.join(db_fpath, 'Lethenteron.regions_vs_motifs.rankings.feather')
+    # rankings_db = os.path.join(db_fpath, 'Lethenteron.no_name.regions_vs_motifs.rankings.feather') # consensus peaks from previous step
+    # # 2.3. make custom motif annotation metadata (tbl)
+    motif_annot_fpath = "/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/00.custom"
+    custom_annotation_fn = os.path.join(motif_annot_fpath, 'lethenteron_annotation.gtf')
+    custom_annotation = pd.read_csv(custom_annotation_fn, sep='\t')
+    # custom_annotation['Strand']
+    # motif_annotation_fn = os.path.join(motif_annot_fpath, 'motifs-v10-nr.lethenteron-m0.001-o0.0.tbl')
+    #
     # from scenicplus.wrappers.run_pycistarget import run_pycistarget
+    # if not os.path.exists(os.path.join(work_dir, 'motifs')):
+    #     os.makedirs(os.path.join(work_dir, 'motifs'))
     # run_pycistarget(
     #     region_sets=region_sets,
     #     species='custom',
@@ -387,9 +488,101 @@ if __name__ == '__main__':
     #     save_path=os.path.join(work_dir, 'motifs'),
     #     ctx_db_path=rankings_db,
     #     dem_db_path=scores_db,
-    #     path_to_motif_annotations=motif_annotation,
+    #     path_to_motif_annotations=motif_annotation_fn,
     #     run_without_promoters=True,
-    #     n_cpu=8,
-    #     _temp_dir=os.path.join(tmp_dir, 'ray_spill'),
-    #     annotation_version="2020"
+    #     n_cpu=20,
+    #     annotation_version="2024"
     # )
+
+    # show the motifs found for topic 8 (specific to B-cells) using DEM
+    # import dill
+    # menr = dill.load(open(os.path.join(work_dir, 'motifs/menr.pkl'), 'rb'))
+    # menr['DEM_topics_otsu_All'].DEM_results('Topic8')
+
+
+    # inferring enhancer-driven Gene Regulatory Networks (eGRNs) using SCENIC+
+    _stderr = sys.stderr
+    null = open(os.devnull, 'wb')
+    # atac_fn = '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/DATA/02.Derived_Lethenteron/merged.atac.h5ad'
+    scrna_fn = '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/DATA/01.Lethenteron/scrna/a_liver.h5ad'
+    adata = sc.read_h5ad(scrna_fn)  # key_to_group_by, need to match with cistopic_obj
+    cistopic_obj = pickle.load(open(os.path.join(work_dir, 'atac/cistopic_obj.pkl'), 'rb'))
+    cistopic_obj.selected_model = models[2]
+    print('cistopic_obj', type(cistopic_obj))
+    menr = dill.load(open(os.path.join(work_dir, 'motifs/menr.pkl'), 'rb'))
+
+    # ------------------------------------------------
+    #        Create the SCENIC+ object
+    # ------------------------------------------------
+    from scenicplus.scenicplus_class import create_SCENICPLUS_object
+    # scplus_obj = create_SCENICPLUS_object(
+    #     GEX_anndata=adata.raw.to_adata(),
+    #     cisTopic_obj=cistopic_obj,
+    #     menr=menr,
+    #     bc_transform_func=lambda x: f'{x}___a_liver',
+    #     nr_cells_per_metacells=5,
+    #     meta_cell_split=' ',
+    #     multi_ome_mode=False,
+    #     key_to_group_by='celltype')
+    #     # function to convert scATAC-seq barcodes to scRNA-seq ones
+    # # scplus_obj.X_EXP = np.array(scplus_obj.X_EXP.todense())
+    # print(type(scplus_obj.X_EXP))
+    # pickle.dump(scplus_obj, open(os.path.join(work_dir, 'scplus_obj.pkl'), 'wb'))
+    # print(type(scplus_obj))
+    # 2024-01-28 Done.
+
+    biomart_host = "http://may2015.archive.ensembl.org"
+
+    if not os.path.exists(os.path.join(work_dir, 'scenicplus')):
+        os.makedirs(os.path.join(work_dir, 'scenicplus'))
+
+    scplus_obj = pickle.load(open(os.path.join(work_dir, 'scplus_obj.pkl'), 'rb'))
+
+    import pyranges as pr
+    custom_annot = custom_annotation.copy()
+    custom_annot['Strand'] = custom_annot['Strand'].replace(1, '+')
+    custom_annot['Strand'] = custom_annot['Strand'].replace(-1, '-')
+    custom_annot['Transcription_Start_Site'] = custom_annot['Start']
+    pr_annot = pr.PyRanges(custom_annot)
+    # with custom annot a pandas DataFrame containing the extra Transcription_Start_Site column
+
+    s_time = time.time()
+    # for species different from human, mouse or fruit fly
+    from scenicplus.enhancer_to_gene import get_search_space
+
+    get_search_space(
+        scplus_obj,
+        pr_annot=pr_annot,  # see above
+        pr_chromsizes=chromsizes,  # see above
+        upstream=[1000, 150000], downstream=[1000, 150000],
+        biomart_host='http://sep2019.archive.ensembl.org/')
+
+    from scenicplus.wrappers.run_scenicplus import run_scenicplus
+    # run the wrapper like usual
+    try:
+        sys.stderr = open(os.devnull, "w")  # silence stderr
+        run_scenicplus(
+            scplus_obj=scplus_obj,
+            variable=['celltype'],
+            species='custom',
+            assembly='custom',
+            tf_file='/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/00.custom/TFs_Lethenteron.txt',
+            save_path=os.path.join(work_dir, 'scenicplus'),
+            biomart_host=None,
+            upstream=[1000, 150000],
+            downstream=[1000, 150000],
+            calculate_TF_eGRN_correlation=False,
+            calculate_DEGs_DARs=False,
+            export_to_loom_file=False,
+            export_to_UCSC_file=False,
+            n_cpu=24,
+            _temp_dir=None)
+        sys.stderr = sys.__stderr__  # unsilence stderr
+    except Exception as e:
+        # in case of failure, still save the object
+        dill.dump(scplus_obj, open(os.path.join(work_dir, 'scenicplus/scplus_obj.pkl'), 'wb'), protocol=-1)
+        raise (e)
+
+    e_time = time.time()
+    print(f'finished in {e_time - s_time} seconds')
+    print(scplus_obj.uns.keys())
