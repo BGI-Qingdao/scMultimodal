@@ -17,7 +17,6 @@ parser$add_argument("--name", help = "Project name")
 # Parse the command-line arguments
 args <- parser$parse_args()
 
-
 # load scATAC data
 load_peak_matrix <- function(directory_path){
     barcode_fn <- file.path(directory_path, "barcodes.tsv")
@@ -74,10 +73,10 @@ gff_fn <- args$gff
 read_gff <- function(gff_fn, custom_column = NULL){
     # read file
     gff = rtracklayer::import.gff(gff_fn)
-    
+
     # ensure 'gene_name', 'gene_biotype' are in the metadata columns
     column_names = colnames(GenomicRanges::mcols(gff))
-    
+
     # only select gene and protein coding genes
     if ('type' %in% column_names){
         gff = gff[gff$type=='gene']
@@ -87,7 +86,7 @@ read_gff <- function(gff_fn, custom_column = NULL){
     }else{
         gff$gene_biotype <- "protein_coding"
     }
-    
+
     # Check if 'gene_name' is missing and update it based on other columns
     if (!'gene_name'  %in% column_names){
       if ("gene_id" %in% column_names) {
@@ -106,11 +105,6 @@ read_gff <- function(gff_fn, custom_column = NULL){
     }
     return (gff)
 }
-#gff = rtracklayer::import.gff(gff_fn)
-#gene_gff = gff[gff$type=='gene']
-#gene_gff$gene_id <- gene_gff$ID
-#gene_gff$gene_biotype <- "protein_coding"
-#gene_gff$gene_name <- gene_gff$gene_id
 
 gene_gff <- read_gff(gff_fn, custom_column=args$gene_name_col)
 Annotation(data.atac) <- gene_gff
@@ -144,18 +138,17 @@ data.atac <- ScaleData(data.atac, features = rownames(data.atac))
 
 # Identify anchors
 transfer.anchors <- FindTransferAnchors(reference = data.rna, query = data.atac, features = VariableFeatures(object = data.rna), reference.assay = "RNA", query.assay = "ACTIVITY", reduction = "cca")
-saveRDS(data.atac, 'mid.atac.rds')
-print('Finished finding transfer anchors')
+# data.atac = readRDS('mid.atac.rds')
+print('-----Finished finding transfer anchors-----')
 
 # Annotate scATAC-seq cells via label transfer
 celltype.predictions <- TransferData(anchorset = transfer.anchors, refdata = data.rna@meta.data$celltype, weight.reduction = data.atac[["lsi"]], dims = 2:30)
-print('Finished transferring data')
+print('-----Finished transferring data-----')
 data.atac <- AddMetaData(data.atac, metadata = celltype.predictions)
 
-print('Saving results to disk...')
-saveRDS(data.atac, paste0(args$name, '.merged.atac.rds')
+saveRDS(data.atac, paste0(args$name, '.merged.atac.rds'))
+print('-----Saved results to disk-----')
 
-library(SeuratDisk)
-SaveH5Seurat(data.atac, filename = paste0(args$name, ".h5Seurat"))
-Convert(paste0(args$name, ".h5Seurat"), dest = "h5ad")
-
+# library(SeuratDisk)
+# SaveH5Seurat(data.atac, filename = paste0(args$name, ".h5Seurat"))
+# Convert(paste0(args$name, ".h5Seurat"), dest = "h5ad")
