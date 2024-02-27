@@ -14,6 +14,7 @@ parser$add_argument("-f", "--fragments", help = "Path to ATAC fragments.tsv.gz f
 parser$add_argument("-g", "--gff", help = "Path to GFF gene annotation file")
 parser$add_argument("--gene_name_col", help = "gene name columns in to GFF gene annotation file")
 parser$add_argument("--name", help = "Project name")
+parser$add_argument("-o", "--output", help = "output directory")
 # Parse the command-line arguments
 args <- parser$parse_args()
 
@@ -64,7 +65,7 @@ data.atac <- CreateSeuratObject(
 data.atac$tech <- 'atac'
 
 # preprocessing
-data.atac <- FindVariableFeatures(data.atac)#, assay = "ACTIVITY", selection.method = "vst", nfeatures = 2000)
+data.atac <- FindVariableFeatures(data.atac)
 data.atac <- NormalizeData(data.atac)
 data.atac <- ScaleData(data.atac)
 
@@ -138,7 +139,6 @@ data.atac <- ScaleData(data.atac, features = rownames(data.atac))
 
 # Identify anchors
 transfer.anchors <- FindTransferAnchors(reference = data.rna, query = data.atac, features = VariableFeatures(object = data.rna), reference.assay = "RNA", query.assay = "ACTIVITY", reduction = "cca")
-# data.atac = readRDS('mid.atac.rds')
 print('-----Finished finding transfer anchors-----')
 
 # Annotate scATAC-seq cells via label transfer
@@ -146,9 +146,5 @@ celltype.predictions <- TransferData(anchorset = transfer.anchors, refdata = dat
 print('-----Finished transferring data-----')
 data.atac <- AddMetaData(data.atac, metadata = celltype.predictions)
 
-saveRDS(data.atac, paste0(args$name, '.merged.atac.rds'))
+saveRDS(data.atac, paste0(args$output, args$name, '.merged.atac.rds'))
 print('-----Saved results to disk-----')
-
-# library(SeuratDisk)
-# SaveH5Seurat(data.atac, filename = paste0(args$name, ".h5Seurat"))
-# Convert(paste0(args$name, ".h5Seurat"), dest = "h5ad")
