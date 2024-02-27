@@ -10,12 +10,14 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
+import glob
 import dill
 import pickle
 import scanpy as sc
 import numpy as np
 import pyranges as pr
 import pandas as pd
+from typing import Optional
 
 from pycisTopic.utils import (
     read_fragments_from_file,
@@ -28,8 +30,19 @@ from pycisTopic.pseudobulk_peak_calling import (
 
 from handle_atac import (
     RefGenome,
-    scATAC
+    scATAC,
+    ScMultiParams
 )
+from pycisTopic.pseudobulk_peak_calling import peak_calling
+from pycisTopic.iterative_peak_calling import *
+from pycisTopic.cistopic_class import *
+from pycisTopic.cistopic_class import *
+from pycisTopic.lda_models import *
+from pycisTopic.clust_vis import *
+from pycisTopic.topic_binarization import *
+from pycisTopic.diff_features import *
+
+from custom_annotation import get_custom_annot
 
 
 class ScMulti:
@@ -37,125 +50,160 @@ class ScMulti:
                  refgenome_obj,
                  rna_fn,
                  fragment_fn,
-                 output_dir,
+                 scparams,
                  atac_fn=None,
                  atac_cell_data=None,
                  sample_id='a_liver',
-                 fragment_dir=None,
+                 fragments_dict=None,
                  sample_id_col='sample_id',
-                 split_pattern='-',
+                 split_pattern=None,  # '-',
                  variable='celltype',
-                 atac_anno_label='predicted_id',
-                 params_obj=None):
-        self.fasta = refgenome_obj.fasta
-        self.chromsizes = refgenome_obj.chromsizes
+                 atac_anno_label='predicted.id',
+                 gtf_fn=None,
+                 macs_path='macs2'):  # params_obj=None
+        # input exp data
         self.rna_fn = rna_fn
-        self.fragment_fn = fragment_fn
-        self.cell_data = atac_cell_data
-        self.sample_id = sample_id
-        self.sample_id_col = sample_id_col
-        if fragment_dir is None:
-            self.fragment_dir = {self.sample_id: self.fragment_fn}
-        else:
-            self.fragment_dir = fragment_dir
-        self.output_dir = output_dir
-        self.split_pattern = split_pattern
-        self.variable = variable
-        self.atac_anno_label = atac_anno_label
-
         self.rna_data = sc.read_h5ad(self.rna_fn)
         self.atac_data = sc.read_h5ad(atac_fn)
 
-        # Other attributes
-        self.macs_path = None
+        # species reference genome
+        self.fasta = refgenome_obj.fasta_fn
+        self.chromsizes_fn = refgenome_obj.chromsize_fn
+        self.chromsizes = None
         self.genome_size = None
+        self.gtf_fn = gtf_fn
+
+        # ATAC meta data
+        self.cell_data = atac_cell_data
+        self.sample_id = sample_id
+        self.sample_id_col = sample_id_col
+        self.variable = variable
+        self.atac_anno_label = atac_anno_label
+
+        # ATAC data attributes
+        self.fragment_fn = fragment_fn
+        if fragments_dict is None:
+            self.fragments_dict = {self.sample_id: self.fragment_fn}
+        else:
+            self.fragments_dict = fragments_dict
+        self.split_pattern = split_pattern
+
+        # Other attributes
+        self.macs_path = macs_path
+
+        # saving results
+        self.work_dir = scparams.work_dir
+        self.output_dir = scparams.output_dir
         self.bed_paths = None
         self.bw_paths = None
+        self.narrow_peaks_paths = None
+        self.path_to_regions = None
 
         # save results
-        if params_obj is None:
-            self.params = ScMultiParams()
-        else:
-            self.params = params_obj
+        # if params_obj is None:
+        #     self.params = ScMultiParams()
+        # else:
+        #     self.params = params_obj
 
         # inter results
         self.cistopic_obj = None
         self.scplus_obj = None
         self.models = None
 
-    def create_atac_cell_data(self, atac_anno_label='predicted.id', labels_fn='', inplace=True):
-        # labels_fn = '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/label_transfered_cell_data.csv'
+    def create_atac_cell_data(self, labels_fn='', inplace=True):
+        """
+        Extract needed annotation information (cell types, barcodes, sample ids...) from ATAC data.
+        :param labels_fn:
+        :param inplace:
+        :return:
+        """
         cell_data = self.atac_data.obs.copy()
         cell_data[self.sample_id_col] = self.sample_id  # 'a_liver'
-        cell_data[atac_anno_label] = cell_data[atac_anno_label].astype(str)
+        cell_data[self.atac_anno_label] = cell_data[self.atac_anno_label].astype(str)
+        # 2024-02-26
+        # Do not allow space or xx other than _ exist in cell type name
+        cell_data[self.atac_anno_label].replace('\s+', '_', regex=True, inplace=True)
+        cell_data[self.atac_anno_label].replace('-', '_', regex=True, inplace=True)
+
         cell_data['barcode'] = list(cell_data.index)
         cell_data['barcode'] = cell_data['barcode'].astype(str)
         # set data type of the celltype column to str, otherwise the export_pseudobulk function will complain.
-        transfered_labels = pd.read_csv(labels_fn, index_col=0)
-        cell_data[self.variable] = transfered_labels[atac_anno_label]
+        # transfered_labels = pd.read_csv(labels_fn, index_col=0)
+        # cell_data[self.variable] = transfered_labels[self.atac_anno_label]
+        cell_data[self.variable] = cell_data[self.atac_anno_label]
+
+        print(cell_data)
         if inplace:
             self.cell_data = cell_data
         return cell_data
 
-    def create_chromesize(self, size_fn):
-        # size_fn = '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/DATA/01.Lethenteron/data/Lethenteron_reissneri_sizes.genome'
-        chromsizes = pd.read_csv(size_fn, sep='\t', header=None)
+    def create_chromesize(self):  # , size_fn):
+        """
+        Generate chrome size object (PyRange)
+        :return:
+        """
+        chromsizes = pd.read_csv(self.chromsizes_fn, sep='\t', header=None)
+        self.genome_size = sum(chromsizes[1])
         chromsizes.columns = ['Chromosome', 'End']
         chromsizes['Start'] = [0] * chromsizes.shape[0]
         chromsizes = chromsizes.loc[:, ['Chromosome', 'Start', 'End']]
         chromsizes = pr.PyRanges(chromsizes)
-
         self.chromsizes = chromsizes
+        print('Chrome Size:')
+        print(self.chromsizes)
         return chromsizes
 
-    def one_sample(self, group, chromsizes, cell_data, output_dir, variable, split_pattern=None):
+    def one_sample(self, cell_type):
         """
-
-        :param group:
-        :param chromsizes:
-        :param cell_data:
-        :param variable:
+        Generate pseudobulk peaks data for given cell type
+        :param cell_type:
         :return:
         """
         fragments_df_dict = {}
-        for sample_id in self.fragment_dir.keys():
+        for sample_id in self.fragments_dict.keys():
             fragments_df = read_fragments_from_file(
-                self.fragment_dir[sample_id],
+                self.fragments_dict[sample_id],
                 use_polars=True
             ).df
             fragments_df.Start = np.int32(fragments_df.Start)
             fragments_df.End = np.int32(fragments_df.End)
             if "Score" in fragments_df:
                 fragments_df.Score = np.int32(fragments_df.Score)
-            if "barcode" in cell_data:
+            if "barcode" in self.cell_data:
                 fragments_df = fragments_df.loc[
-                    fragments_df["Name"].isin(cell_data["barcode"].tolist())
+                    fragments_df["Name"].isin(self.cell_data["barcode"].tolist())
                 ]
             else:
                 fragments_df = fragments_df.loc[
                     fragments_df["Name"].isin(
-                        prepare_tag_cells(cell_data.index.tolist(), self.split_pattern)
+                        prepare_tag_cells(self.cell_data.index.tolist(), self.split_pattern)
                     )
                 ]
             fragments_df_dict[sample_id] = fragments_df
-        if "barcode" in cell_data:
-            cell_data = cell_data.loc[:, [self.variable, self.sample_id_col, "barcode"]]
+        if "barcode" in self.cell_data:
+            self.cell_data = self.cell_data.loc[:, [self.variable, self.sample_id_col, "barcode"]]
         else:
-            cell_data = cell_data.loc[:, [self.variable, self.sample_id_col]]
-        cell_data[self.variable] = cell_data[self.variable].replace(
+            self.cell_data = self.cell_data.loc[:, [self.variable, self.sample_id_col]]
+        self.cell_data[self.variable] = self.cell_data[self.variable].replace(
             " ", "", regex=True)
-        cell_data[self.variable] = cell_data[self.variable].replace(
+        self.cell_data[self.variable] = self.cell_data[self.variable].replace(
             "[^A-Za-z0-9]+", "_", regex=True)
         # groups = sorted(list(set(cell_data[self.variable])))
-        if isinstance(chromsizes, pd.DataFrame):
-            chromsizes = chromsizes.loc[:, ["Chromosome", "Start", "End"]]
-            chromsizes = pr.PyRanges(chromsizes)
+        if isinstance(self.chromsizes, pd.DataFrame):
+            self.chromsizes = self.chromsizes.loc[:, ["Chromosome", "Start", "End"]]
+            self.chromsizes = pr.PyRanges(self.chromsizes)
+
+        # set up saving directories
+        if not os.path.exists(os.path.join(self.output_dir, 'pseudobulk_bw_files')):
+            os.makedirs(os.path.join(self.output_dir, 'pseudobulk_bw_files'))
+        if not os.path.exists(os.path.join(self.output_dir, 'pseudobulk_bed_files')):
+            os.makedirs(os.path.join(self.output_dir, 'pseudobulk_bed_files'))
         try:
             export_pseudobulk_one_sample(
-                cell_data=cell_data,
-                group=group,
+                cell_data=self.cell_data,
+                group=cell_type,
                 fragments_df_dict=fragments_df_dict,
-                chromsizes=chromsizes,
+                chromsizes=self.chromsizes,
                 bigwig_path=os.path.join(self.output_dir, 'pseudobulk_bw_files/'),
                 bed_path=os.path.join(self.output_dir, 'pseudobulk_bed_files/'),
                 sample_id_col=self.sample_id_col,
@@ -164,44 +212,80 @@ class ScMulti:
                 split_pattern=self.split_pattern
             )
         except ZeroDivisionError:
-            print(f'{group}: ZeroDivisionError')
+            print(f'{cell_type}: ZeroDivisionError')
 
-    def generate_pseudo_peaks(self, atac_anno_label='predicted.id'):
+    def generate_pseudo_peaks(self, celltypes: Optional[list] = None):
+        """
+        Generate pseudobulk peaks for all cell types in data
+        :return:
+        """
         if not os.path.exists(os.path.join(self.output_dir, 'atac/pseudobulk_bed_files')):
             os.makedirs(os.path.join(self.output_dir, 'atac/pseudobulk_bed_files'))
-
         # to create pseudo bulk data, needs cell type annotation from scRNA-seq data
-
-        celltypes = list(set(self.atac_data.obs.obs[atac_anno_label]))
+        # celltypes = list(set(self.atac_data.obs[self.atac_anno_label]))
+        if celltypes is None:
+            celltypes = list(set(self.cell_data[self.atac_anno_label]))
         for celltype in celltypes:
-            self.one_sample(celltype,
-                            self.chromsizes,
-                            self.cell_data,
-                            self.output_dir,
-                            variable=atac_anno_label,
-                            split_pattern=self.split_pattern)
-
+            self.one_sample(celltype)
         self.bed_paths = os.path.join(self.output_dir, 'pseudobulk_bed_files/bed_paths.pkl')
         self.bw_paths = os.path.join(self.output_dir, 'pseudobulk_bed_files/bw_paths.pkl')
 
-    def call_pseudo_peaks(self):
-        from pycisTopic.pseudobulk_peak_calling import peak_calling
-        from pycisTopic.iterative_peak_calling import *
-        sys.stderr = open(os.devnull, "w")  # silence stderr
-        narrow_peaks_dict = peak_calling(self.macs_path,
-                                         self.bed_paths,
-                                         '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron',
-                                         genome_size=1369200000,
-                                         n_cpu=8,
-                                         input_format='AUTO',
-                                         shift=73,
-                                         ext_size=146,
-                                         keep_dup='all',
-                                         q_value=0.05)
-        sys.stderr = sys.__stderr__  # unsilence stderr
-        # import glob
-        # files = glob.glob('/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/narrow_peaks_dict/*.narrowPeak')
-        # narrow_peaks_dict = {x: pr.read_bed(x) for x in files}
+    def custom_call_peaks(self,
+                          convert_strand=False,
+                          genome_size=None,
+                          input_format='AUTO',
+                          shift=73,
+                          ext_size=146,
+                          keep_dup='all',
+                          q_value=0.05,
+                          ):
+        import glob
+        import subprocess
+        if genome_size is None:
+            genome_size = self.genome_size
+            print(genome_size)
+        paths = os.path.join(self.output_dir, 'pseudobulk_bed_files')
+        out = os.path.join(self.output_dir, 'consensus_peak_calling/narrow_peaks')
+        self.narrow_peaks_paths = out
+        if not os.path.exists(out):
+            os.makedirs(out)
+        for bed_file in glob.glob(f'{paths}/*.bed.gz'):
+            if convert_strand:
+                add_strand(bed_file)
+            # cmd = (
+            #         self.macs_path
+            #         + " callpeak --treatment %s --name %s  --outdir %s --format %s --gsize %s "
+            #           "--qvalue %s --nomodel --shift %s --extsize %s --keep-dup %s --call-summits"
+            # )
+            # name = get_celltype_name(bed_file)
+            # cmd = cmd % (
+            #     bed_file,
+            #     name,
+            #     out,
+            #     input_format,
+            #     genome_size,
+            #     q_value,
+            #     shift,
+            #     ext_size,
+            #     keep_dup,
+            # )
+            cmd = f'{self.macs_path} callpeak --treatment {bed_file} --name {get_celltype_name(bed_file)} --outdir {out}  --format {input_format} --gsize {genome_size} --qvalue {q_value} --nomodel --shift {shift} --extsize {ext_size} --keep-dup {keep_dup} --call-summits --nolambda'
+            print(cmd)
+            try:
+                subprocess.check_output(args=cmd, shell=True, stderr=subprocess.STDOUT)
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    "command '{}' return with error (code {}): {}".format(
+                        e.cmd, e.returncode, e.output
+                    )
+                )
+            finally:
+                return out
+
+    def custom_consensus_peaks(self, narrow_peaks_paths=None, peak_half_width=250):
+        if narrow_peaks_paths is None:
+            narrow_peaks_paths = self.narrow_peaks_paths
+        narrow_peaks_dict = read_narrowPeaks(narrow_peaks_paths)
         # Rename
         for x in narrow_peaks_dict.keys():
             narrow_peaks_dict[x].columns = [
@@ -216,139 +300,232 @@ class ScMulti:
                 '-log10_qval',
                 'Summit']
 
-        # Other param
-        peak_half_width = 250
         # Get consensus peaks
         sys.stderr = open(os.devnull, "w")  # silence stderr
         consensus_peaks = get_consensus_peaks(narrow_peaks_dict, peak_half_width, chromsizes=self.chromsizes)
         sys.stderr = sys.__stderr__  # unsilence stderr
-        consensus_bed_path = '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/consensus_regions.bed'
+        consensus_bed_path = os.path.join(self.output_dir, 'consensus_regions.bed')
         consensus_peaks.to_bed(
             path=consensus_bed_path,
             keep=True,
             compression='infer',
             chain=False)
-        self.path_to_regions = {
-            self.sample_id: consensus_bed_path}
+        self.path_to_regions = {self.sample_id: consensus_bed_path}
 
-    def get_topics(self):
-        from pycisTopic.cistopic_class import *
+    def call_pseudo_peaks(self,
+                          genome_size=None,
+                          n_cpu=8,
+                          input_format='AUTO',
+                          shift=73,
+                          ext_size=146,
+                          keep_dup='all',
+                          q_value=0.05,
+                          peak_half_width=250):
+        """
+        Call pseudo peaks and generate consensus peaks
+        :param genome_size:
+        :param n_cpu:
+        :param input_format:
+        :param shift:
+        :param ext_size:
+        :param keep_dup:
+        :param q_value:
+        :param peak_half_width:
+        :return: path_to_regions
+        """
+        sys.stderr = open(os.devnull, "w")  # silence stderr
+        if genome_size is None:
+            genome_size = self.genome_size
+        narrow_peaks_dict = peak_calling(self.macs_path,
+                                         self.bed_paths,
+                                         self.work_dir,
+                                         genome_size=genome_size,
+                                         n_cpu=n_cpu,
+                                         input_format=input_format,
+                                         shift=shift,
+                                         ext_size=ext_size,
+                                         keep_dup=keep_dup,
+                                         q_value=q_value)
+        sys.stderr = sys.__stderr__  # unsilence stderr
+        # Rename
+        for x in narrow_peaks_dict.keys():
+            narrow_peaks_dict[x].columns = [
+                'Chromosome',
+                'Start',
+                'End',
+                'Name',
+                'Score',
+                'Strand',
+                'FC_summit',
+                '-log10_pval',
+                '-log10_qval',
+                'Summit']
+
+        # Get consensus peaks
+        sys.stderr = open(os.devnull, "w")  # silence stderr
+        consensus_peaks = get_consensus_peaks(narrow_peaks_dict, peak_half_width, chromsizes=self.chromsizes)
+        sys.stderr = sys.__stderr__  # unsilence stderr
+        consensus_bed_path = os.path.join(self.output_dir, 'consensus_regions.bed')
+        consensus_peaks.to_bed(
+            path=consensus_bed_path,
+            keep=True,
+            compression='infer',
+            chain=False)
+        self.path_to_regions = {self.sample_id: consensus_bed_path}
+
+    def create_cistopic_obj(self, n_cpu=10):
         cistopic_obj = create_cistopic_object_from_fragments(
-            path_to_fragments=self.fragments_dict['a_liver'],
-            path_to_regions=self.path_to_regions['a_liver'],
-            n_cpu=1,
-            project='a_liver')
-
+            path_to_fragments=self.fragments_dict[self.sample_id],
+            path_to_regions=self.path_to_regions[self.sample_id],
+            n_cpu=n_cpu,
+            project=self.sample_id)
         # Add cell metadata
-        cell_data = pd.read_csv(os.path.join(self.work_dir, 'cell_data.csv'))
-        # cistopic makes use of the sample_id to match the correct cell barcodes to the metadata, let's add the sample_id as a suffix to the cell barcodes
-        cell_data['barcode'] = cell_data['barcode'] + '___' + cell_data['sample_id']
-        cell_data = cell_data.set_index('barcode')
+        cell_data = self.cell_data.copy()
+        if cell_data.index.name is None:
+            # cistopic makes use of the sample_id to match the correct cell barcodes to the metadata, let's add the sample_id as a suffix to the cell barcodes
+            cell_data['barcode'] = cell_data['barcode'] + '___' + cell_data['sample_id']
+            cell_data = cell_data.set_index('barcode')
         cistopic_obj.add_cell_data(cell_data)
+        self.cell_data = cell_data
         # cistopic_obj.add_cell_data(cell_data[['a_liver']])
-        # pickle.dump(cistopic_obj,open(os.path.join(work_dir, 'atac/cistopic_obj_models_500_iter_LDA.pkl'), 'wb'))
-        # cistopic_obj = pickle.load(open(os.path.join(work_dir, 'atac/cistopic_obj_models_500_iter_LDA.pkl'), 'rb'))
+
+        if not os.path.exists(os.path.join(self.output_dir, 'atac')):
+            os.makedirs(os.path.join(self.output_dir, 'atac'))
+        pickle.dump(cistopic_obj,open(os.path.join(self.output_dir, 'atac/cistopic_obj.pkl'), 'wb'))
+
+        self.cistopic_obj = cistopic_obj
+        return cistopic_obj
+
+    def get_topics(self,
+                   n_cpu=10,
+                   n_topics=None,
+                   n_iter=500,
+                   random_state=555,
+                   alpha=50,
+                   alpha_by_topic=True,
+                   eta=0.1,
+                   eta_by_topic=False,
+                   select_model=16,
+                   return_model=True,
+                   metrics=None,
+                   plot_metrics=False
+                   ):
+        """
+
+        :param n_cpu:
+        :param n_topics:
+        :param n_iter:
+        :param random_state:
+        :param alpha:
+        :param alpha_by_topic:
+        :param eta:
+        :param eta_by_topic:
+        :return:
+        """
+        if metrics is None:
+            metrics = ['Arun_2010', 'Cao_Juan_2009', 'Minmo_2011', 'loglikelihood']
+        if n_topics is None:
+            n_topics = [2, 4, 10, 16, 32, 48]
 
         # Run topic modeling. The purpose of this is twofold:
         # To find sets of co-accessible regions (topics), this will be used downstream as candidate enhancers
         # (together with Differentially Accessible Regions (DARs)).
         # To impute dropouts.
-        from pycisTopic.cistopic_class import *
         self.models = run_cgs_models(self.cistopic_obj,
-                                     n_topics=[2, 4, 10, 16, 32, 48],
-                                     n_cpu=5,
-                                     n_iter=500,
-                                     random_state=555,
-                                     alpha=50,
-                                     alpha_by_topic=True,
-                                     eta=0.1,
-                                     eta_by_topic=False,
-                                     save_path=self.work_dir)
-        if not os.path.exists(os.path.join(self.work_dir, 'atac/models')):
-            os.makedirs(os.path.join(self.work_dir, 'atac/models'))
+                                     n_topics=n_topics,
+                                     n_cpu=n_cpu,
+                                     n_iter=n_iter,
+                                     random_state=random_state,
+                                     alpha=alpha,
+                                     alpha_by_topic=alpha_by_topic,
+                                     eta=eta,
+                                     eta_by_topic=eta_by_topic,
+                                     save_path=self.output_dir)
+        if not os.path.exists(os.path.join(self.output_dir, 'atac/models')):
+            os.makedirs(os.path.join(self.output_dir, 'atac/models'))
         pickle.dump(self.models,
-                    open(os.path.join(self.work_dir, 'atac/models/a_liver_youti_2_1.pkl'), 'wb'))
-        # models = pickle.load(open(os.path.join(work_dir, 'atac/models/a_liver_youti_2_1.pkl'), 'rb'))
+                    open(os.path.join(self.output_dir, f'atac/models/{self.sample_id}_models_500_iter_LDA.pkl'), 'wb'))
 
         # ------------------------------------------------
         # Analyze models
         # ------------------------------------------------
-        from pycisTopic.lda_models import *
         model = evaluate_models(self.models,
-                                select_model=16,
-                                return_model=True,
-                                metrics=['Arun_2010', 'Cao_Juan_2009', 'Minmo_2011', 'loglikelihood'],
-                                plot_metrics=False)
-        cistopic_obj.add_LDA_model(model)
-        # pickle.dump(cistopic_obj, open(os.path.join(work_dir, 'atac/cistopic_obj.pkl'), 'wb'))
-        # self.cistopic_obj = pickle.load(open(os.path.join(self.work_dir, 'atac/cistopic_obj.pkl'), 'rb'))
+                                select_model=select_model,
+                                return_model=return_model,
+                                metrics=metrics,
+                                plot_metrics=plot_metrics)
+        print(model)
+        self.cistopic_obj.add_LDA_model(model)
         self.cistopic_obj.add_cell_data(self.cell_data)
-        pickle.dump(self.cistopic_obj, open(os.path.join(self.work_dir, 'atac/cistopic_obj.pkl'), 'wb'))
+        pickle.dump(self.cistopic_obj, open(os.path.join(self.output_dir, 'atac/cistopic_obj_models.pkl'), 'wb'))
 
     def visualize_topics(self):
+        #
+        if not os.path.exists(os.path.join(self.output_dir, 'figs')):
+            os.makedirs(os.path.join(self.output_dir, 'figs'))
+        out_path = os.path.join(self.output_dir, 'figs')
         # Visualization
-        from pycisTopic.clust_vis import *
-        run_umap(cistopic_obj, target='cell', scale=True)
-        plot_metadata(cistopic_obj, reduction_name='UMAP', variables=['celltype'],
-                      save=os.path.join(work_dir, 'figs/fig1'))
-        plot_topic(cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(work_dir, 'figs/fig2'))
+        run_umap(self.cistopic_obj, target='cell', scale=True)
+        plot_metadata(self.cistopic_obj, reduction_name='UMAP', variables=[self.variable], save=os.path.join(out_path, 'metadata1'))
+        plot_topic(self.cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(out_path, 'topic_plot1'))
 
         # correct this kind of batch effects
         # Harmony
-        harmony(cistopic_obj, 'sample_id', random_state=555)
+        harmony(self.cistopic_obj, 'sample_id', random_state=555)
         # # UMAP
-        run_umap(cistopic_obj, reduction_name='harmony_UMAP',
+        run_umap(self.cistopic_obj, reduction_name='harmony_UMAP',
                  target='cell', harmony=True)
-        run_tsne(cistopic_obj, reduction_name='harmony_tSNE',
+        run_tsne(self.cistopic_obj, reduction_name='harmony_tSNE',
                  target='cell', harmony=True)
         # Plot again
-        run_umap(cistopic_obj, target='cell', scale=True)
-        plot_metadata(cistopic_obj, reduction_name='UMAP', variables=['celltype'],
-                      save=os.path.join(work_dir, 'figs/fig1'))
-        plot_topic(cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(work_dir, 'figs/fig2'))
+        run_umap(self.cistopic_obj, target='cell', scale=True)
+        plot_metadata(self.cistopic_obj, reduction_name='UMAP', variables=[self.variable],
+                      save=os.path.join(out_path, 'metadata'))
+        plot_topic(self.cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(out_path, 'topic_plot'))
 
-        cell_topic_heatmap(cistopic_obj,
-                           variables=['celltype'],
+        cell_topic_heatmap(self.cistopic_obj,
+                           variables=[self.variable],
                            scale=False,
                            legend_loc_x=1.05,
                            legend_loc_y=-1.2,
                            legend_dist_y=-1,
                            figsize=(10, 20),
-                           save=work_dir + 'figs/heatmap_topic_contr.pdf')
+                           save=out_path + '/heatmap_topic_contr.pdf')
 
-    def candidate_enhancer_regions(self):
-        from pycisTopic.topic_binarization import *
+    def candidate_enhancer_regions(self, split_pattern='-'):
+        if not os.path.exists(os.path.join(self.output_dir, 'figs')):
+            os.makedirs(os.path.join(self.output_dir, 'figs'))
+        out_path = os.path.join(self.output_dir, 'figs')
 
-        region_bin_topics_otsu = binarize_topics(self.cistopic_obj, method='otsu', save=work_dir + 'figs/otsu.pdf')
+        region_bin_topics_otsu = binarize_topics(self.cistopic_obj, method='otsu', save=out_path + '/otsu.pdf')
         region_bin_topics_top3k = binarize_topics(self.cistopic_obj, method='ntop', ntop=3000,
-                                                  save=work_dir + 'figs/top3k.pdf')
+                                                  save=out_path + '/top3k.pdf')
         binarized_cell_topic = binarize_topics(self.cistopic_obj, target='cell', method='li', plot=True, num_columns=5,
-                                               nbins=100, save=self.work_dir + 'figs/cell_topic.pdf')
+                                               nbins=100, save=out_path + '/cell_topic.pdf')
 
-        from pycisTopic.diff_features import *
-        imputed_acc_obj = impute_accessibility(cistopic_obj, selected_cells=None, selected_regions=None,
+        imputed_acc_obj = impute_accessibility(self.cistopic_obj, selected_cells=None, selected_regions=None,
                                                scale_factor=10 ** 6)
         normalized_imputed_acc_obj = normalize_scores(imputed_acc_obj, scale_factor=10 ** 4)
         variable_regions = find_highly_variable_features(normalized_imputed_acc_obj, plot=False)
-        markers_dict = find_diff_features(cistopic_obj, imputed_acc_obj, variable='celltype',
-                                          var_features=variable_regions, split_pattern='-')
+        markers_dict = find_diff_features(cistopic_obj, imputed_acc_obj, variable=self.variable,
+                                          var_features=variable_regions, split_pattern=split_pattern)
 
-        if not os.path.exists(os.path.join(self.work_dir, 'atac/candidate_enhancers')):
-            os.makedirs(os.path.join(self.work_dir, 'atac/candidate_enhancers'))
+        if not os.path.exists(os.path.join(self.output_dir, 'atac/candidate_enhancers')):
+            os.makedirs(os.path.join(self.output_dir, 'atac/candidate_enhancers'))
         pickle.dump(region_bin_topics_otsu,
-                    open(os.path.join(self.work_dir, 'atac/candidate_enhancers/region_bin_topics_otsu.pkl'), 'wb'))
+                    open(os.path.join(self.output_dir, 'atac/candidate_enhancers/region_bin_topics_otsu.pkl'), 'wb'))
         pickle.dump(region_bin_topics_top3k,
-                    open(os.path.join(self.work_dir, 'atac/candidate_enhancers/region_bin_topics_top3k.pkl'), 'wb'))
-        pickle.dump(markers_dict, open(os.path.join(self.work_dir, 'atac/candidate_enhancers/markers_dict.pkl'), 'wb'))
+                    open(os.path.join(self.output_dir, 'atac/candidate_enhancers/region_bin_topics_top3k.pkl'), 'wb'))
+        pickle.dump(markers_dict, open(os.path.join(self.output_dir, 'atac/candidate_enhancers/markers_dict.pkl'), 'wb'))
 
-    def enrichment(self):
+    def enrichment(self, chrom_header='chr'):
         # 1. Convert to dictionary of pyranges objects.
         region_bin_topics_otsu = pickle.load(
-            open(os.path.join(self.work_dir, 'atac/candidate_enhancers/region_bin_topics_otsu.pkl'), 'rb'))
+            open(os.path.join(self.output_dir, 'atac/candidate_enhancers/region_bin_topics_otsu.pkl'), 'rb'))
         region_bin_topics_top3k = pickle.load(
-            open(os.path.join(self.work_dir, 'atac/candidate_enhancers/region_bin_topics_top3k.pkl'), 'rb'))
+            open(os.path.join(self.output_dir, 'atac/candidate_enhancers/region_bin_topics_top3k.pkl'), 'rb'))
         markers_dict = pickle.load(
-            open(os.path.join(self.work_dir, 'atac/candidate_enhancers/markers_dict.pkl'), 'rb'))
+            open(os.path.join(self.output_dir, 'atac/candidate_enhancers/markers_dict.pkl'), 'rb'))
 
         from pycistarget.utils import region_names_to_coordinates
         region_sets = {}
@@ -357,16 +534,16 @@ class ScMulti:
         region_sets['DARs_markers_dict'] = {}
         for topic in region_bin_topics_otsu.keys():
             regions = region_bin_topics_otsu[topic].index[
-                region_bin_topics_otsu[topic].index.str.startswith('Hic_chr')]  # only keep regions on known chromosomes
+                region_bin_topics_otsu[topic].index.str.startswith(chrom_header)]  # only keep regions on known chromosomes
             region_sets['topics_otsu'][topic] = pr.PyRanges(region_names_to_coordinates(regions))
         for DAR in region_bin_topics_top3k.keys():
             regions = region_bin_topics_top3k[DAR].index[
-                region_bin_topics_top3k[DAR].index.str.startswith('Hic_chr')]  # only keep regions on known chromosomes
+                region_bin_topics_top3k[DAR].index.str.startswith(chrom_header)]  # only keep regions on known chromosomes
             region_sets['DARs_region_bin_topics_top3k'][DAR] = pr.PyRanges(region_names_to_coordinates(regions))
         for DAR in markers_dict.keys():  # TODO: why there are empty dataframes
             if not markers_dict[DAR].empty:
                 regions = markers_dict[DAR].index[
-                    markers_dict[DAR].index.str.startswith('Hic_chr')]  # only keep regions on known chromosomes
+                    markers_dict[DAR].index.str.startswith(chrom_header)]  # only keep regions on known chromosomes
                 region_sets['DARs_markers_dict'][DAR] = pr.PyRanges(region_names_to_coordinates(regions))
         for key in region_sets.keys():
             print(f'{key}: {region_sets[key].keys()}')
@@ -383,8 +560,10 @@ class ScMulti:
                                    'Lethenteron.no_name.regions_vs_motifs.rankings.feather')  # consensus peaks from previous step
         # # 2.3. make custom motif annotation metadata (tbl)
         motif_annot_fpath = "/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/01.Lethenteron/00.custom"
-        custom_annotation_fn = os.path.join(motif_annot_fpath, 'lethenteron_annotation.gtf')
-        custom_annotation = pd.read_csv(custom_annotation_fn, sep='\t')
+        # 2024-02-26
+        custom_annotation = get_custom_annot(self.gtf_fn, os.path.join(self.output_dir, f'custom_annotation.gtf'))
+        # custom_annotation_fn = os.path.join(motif_annot_fpath, 'lethenteron_annotation.gtf')
+        # custom_annotation = pd.read_csv(custom_annotation_fn, sep='\t')
         motif_annotation_fn = os.path.join(motif_annot_fpath, 'motifs-v10-nr.lethenteron-m0.001-o0.0.tbl')
 
         from scenicplus.wrappers.run_pycistarget import run_pycistarget
@@ -488,21 +667,37 @@ class ScMulti:
             raise (e)
 
 
-class ScMultiParams:
-    def __init__(self):
-        self.narrowPeaks_path = None
-        self.consensus_bed_path = None
-        self.bed_paths = None
-        self.bw_paths = None
-        self.output_dir = None
-        self.work_dir = None
-        self.path_to_regions = None
+def get_celltype_name(fn):
+    """ Only suitable for bed files in this package"""
+    bn = os.path.basename(fn)
+    ct = bn.replace('.bed.gz', '')
+    return ct
 
-    def read_narrowPeaks(self):
-        import glob
-        files = glob.glob(f'{self.narrowPeaks_path}/*.narrowPeak')
+
+def read_narrowPeaks(narrowPeaks_path):
+    """
+    Create narrow peaks dictionary
+    :param narrowPeaks_path:
+    :return:
+    """
+    files = glob.glob(f'{narrowPeaks_path}/*.narrowPeak')
+    if files:
         narrow_peaks_dict = {x: pr.read_bed(x) for x in files}
-        return narrow_peaks_dict
+    else:
+        print('Did not find narrow peak files')
+        narrow_peaks_dict = {}
+    return narrow_peaks_dict
+
+
+def add_strand(fn):
+    """
+
+    :param fn:
+    :return:
+    """
+    df = pd.read_csv(fn, compression='gzip', sep='\t', header=None)
+    df[5] = '+'
+    df.to_csv(fn, index=False, compression='gzip', header=None, sep='\t')
 
 
 if __name__ == '__main__':
