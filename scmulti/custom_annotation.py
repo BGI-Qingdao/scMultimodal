@@ -3,9 +3,10 @@
 # @Date: Created on 24 Jan 2024 14:11
 # @Author: Yao LI
 # @File: evo_fish/custom_annotation.py
+import pandas as pd
 
 
-def get_custom_annot(gtf_fn, out_fn):
+def get_custom_annot(gtf_fn: str, out_fn: str) -> pd.DataFrame:
     """
     :param gtf_fn:
     :param out_fn:
@@ -29,8 +30,6 @@ def get_custom_annot(gtf_fn, out_fn):
         246965       chr1  203305519       1     BTG2  protein_coding
         [78812 rows x 5 columns]
     """
-    import pandas as pd
-
     df = pd.read_csv(gtf_fn, header=None, sep='\t')
     # extract gene names
     df[9] = df[8].str.split(';', expand=True)[1]
@@ -43,12 +42,13 @@ def get_custom_annot(gtf_fn, out_fn):
     new.columns = ['Chromosome', 'Start', 'End', 'Strand', 'Gene', 'Transcript_type']
     new['Transcript_type'] = new['Transcript_type'].str.replace('exon', 'protein_coding')
     # convert Strand anno from 1/-1 to +/-
-    new['Strand'] = new['Strand'].str.replace('+','1')
-    new['Strand'] = new['Strand'].str.replace('-','-1')
+    new['Strand'] = new['Strand'].str.replace('+', '1')
+    new['Strand'] = new['Strand'].str.replace('-', '-1')
     # save custom annotation
     print('Custom Annotation:')
     print(new)
     new.to_csv(out_fn, sep='\t', index=False)
+    return new
 
 
 if __name__ == '__main__':
