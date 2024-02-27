@@ -11,8 +11,8 @@ parser$add_argument("--rna", help = "scRNA rds file")
 parser$add_argument("--peaks", required = TRUE, help = "Path to the directory containing peak.bed, barcodes.tsv and matrix.mtx files")
 parser$add_argument("-m", "--metadata_fn", help = "Path to ATAC metadata.tsv file")
 parser$add_argument("-f", "--fragments", help = "Path to ATAC fragments.tsv.gz file")
-parser$add_argument("-g", "--gff", help = "Path to GFF gene annotation file")
-parser$add_argument("--gene_name_col", help = "gene name columns in to GFF gene annotation file")
+parser$add_argument("-g", "--gff", help = "Path to GFF/GTF gene annotation file")
+parser$add_argument("--gene_name_col", help = "gene name columns in to GFF/GTF gene annotation file")
 parser$add_argument("--name", help = "Project name")
 parser$add_argument("-o", "--output", help = "output directory")
 # Parse the command-line arguments
@@ -42,18 +42,23 @@ load_peak_matrix <- function(directory_path){
     return (frag_matrix)
 }
 # Create chromain assay
+# 1.peaks matrix
 peak_dir <- args$peaks
 peak_matrix <- load_peak_matrix(peak_dir)
-print(dim(peak_matrix))
-metadata <- read.table(args$metadata, sep='\t',header =TRUE)
+# 2.metadata
+metadata <- read.table(args$metadata, sep='\t',header =TRUE)  #row.names = 1?
+# 3.fragments.tsv.gz
 frag_fn <- args$fragments
+# 4.Define GRanges object using the features
+# granges <- StringToGRanges(features, sep = c(":", "-"))
+# granges <- granges[as.vector(seqnames(granges) %in% standardChromosomes(granges)),]
 
 chrom_assay <- CreateChromatinAssay(
   counts = peak_matrix,
   sep = c(":", "-","_"),
   fragments = frag_fn,
   min.cells = 1,
-  min.features = 2
+  min.features = 2 #,ranges = granges,
 )
 # Create ATAC Seurat Object
 data.atac <- CreateSeuratObject(
@@ -148,3 +153,21 @@ data.atac <- AddMetaData(data.atac, metadata = celltype.predictions)
 
 saveRDS(data.atac, paste0(args$output, args$name, '.merged.atac.rds'))
 print('-----Saved results to disk-----')
+
+
+plot_annotation <- function(merged.atac, data.rna){
+  png(filename=paste0(args$output, "atac_predicted_id.png"))
+  p1 <- DimPlot(merged.atac, group.by = "predicted.id", label = TRUE) + NoLegend() + ggtitle("Predicted annotation")
+  print(p1)
+  dev.off()
+  p2 <- DimPlot(data.rna, group.by = "celltype", label = TRUE) + NoLegend() + ggtitle("Ground-truth annotation")
+  p1 | p2
+}
+
+plot_umap <- function(data.rna, merged.atac){
+  p1 <- DimPlot(data.rna, group.by = "celltype", label = TRUE) + NoLegend() + ggtitle("RNA")
+  p2 <- DimPlot(merged.atac, group.by = "orig.ident", label = FALSE) + NoLegend() + ggtitle("ATAC")
+  p1 + p2
+  plot <- (p1 + p2) & xlab("UMAP 1") & ylab("UMAP 2") & theme(axis.title = element_text(size = 18))
+  ggsave(filename = paste0(args$output, "atacseq_b4_integration.jpg"), height = 7, width = 12, plot = plot, quality = 50)
+}
