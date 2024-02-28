@@ -6,16 +6,17 @@
 import pandas as pd
 
 
-def get_custom_annot(gtf_fn: str, out_fn: str) -> pd.DataFrame:
+def get_custom_annot(gtf_fn: str, out_fn: str, comment="#") -> pd.DataFrame:
     """
     :param gtf_fn:
     :param out_fn:
+    :param comment: skip lines startswith #
     :return:
     Object: to create a dataframe like this:
     pandas DataFrame with genome annotation for custom species (i.e. for a species other than homo_sapiens, mus_musculus,
     drosophila_melanogaster or gallus_gallus).
     This DataFrame should (minimally) look like the example below, and only contains protein coding genes:
-    >>> custom_annot
+    custom_annot:
             Chromosome      Start  Strand     Gene Transcript_type
         8053         chrY   22490397       1      PRY  protein_coding
         8153         chrY   12662368       1    USP9Y  protein_coding
@@ -30,7 +31,7 @@ def get_custom_annot(gtf_fn: str, out_fn: str) -> pd.DataFrame:
         246965       chr1  203305519       1     BTG2  protein_coding
         [78812 rows x 5 columns]
     """
-    df = pd.read_csv(gtf_fn, header=None, sep='\t')
+    df = pd.read_csv(gtf_fn, header=None, sep='\t', comment=comment)
     # extract gene names
     df[9] = df[8].str.split(';', expand=True)[1]
     df[9] = df[9].str.split(' ', expand=True)[2]
@@ -45,8 +46,6 @@ def get_custom_annot(gtf_fn: str, out_fn: str) -> pd.DataFrame:
     new['Strand'] = new['Strand'].str.replace('+', '1')
     new['Strand'] = new['Strand'].str.replace('-', '-1')
     # save custom annotation
-    print('Custom Annotation:')
-    print(new)
     new.to_csv(out_fn, sep='\t', index=False)
     return new
 
