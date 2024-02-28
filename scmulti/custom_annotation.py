@@ -40,7 +40,7 @@ def get_custom_annot(gtf_fn: str, out_fn: str, comment="#") -> pd.DataFrame:
     new = df[[0, 3, 4, 6, 9, 2]]
     # select only protein_coding genes/entries
     new = new[new[2] == 'exon']
-    new.columns = ['Chromosome', 'Start', 'End', 'Strand', 'Gene', 'Transcript_type']
+    new.columns = ['Chromosome', 'Start', 'End', 'Strand', 'Gene', 'Transcript_type']  # TODO: start and end has different data type int32 and int64
     new['Transcript_type'] = new['Transcript_type'].str.replace('exon', 'protein_coding')
     # convert Strand anno from 1/-1 to +/-
     new['Strand'] = new['Strand'].str.replace('+', '1')

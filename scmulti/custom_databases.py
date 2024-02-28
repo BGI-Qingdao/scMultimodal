@@ -121,11 +121,11 @@ class CustomDatabase:
         sub_hm = hm[hm[ref_col].isin(list(Agene_id_list))]
         ah_anno = sub_hm[sub_hm[target_col] != '-']
         ah_anno[[ref_col, target_col]].to_csv(f'{self.saving_dir}/{self.db_prefix}_{ref_species}_gene_name.txt',
-                                              index=False)
+                                              index=False)  # TODO: is this necessary
 
         with open(ref_tfs, 'r') as f:
             reference_tfs = f.read().splitlines()
-        homolog_tfs = list(set(ah_anno[ah_anno[target_col].isin(reference_tfs)][ref_col]))
+        homolog_tfs = list(set(ah_anno[ah_anno[target_col].isin(reference_tfs)][ref_col]))  # TODO: better way to get TFs
         self.tf_list = f'{self.db_prefix}_TFs.txt'
         with open(os.path.join(self.saving_dir, self.tf_list), 'w') as f:
             f.writelines('\n'.join(homolog_tfs))
@@ -152,7 +152,7 @@ class CustomDatabase:
         ref_tbl_df = pd.read_csv(ref_tbl_fn, sep='\t', header=0, dtype=str, na_values='')
         columns = ref_tbl_df.columns.values
 
-        homolog = pd.read_csv(target_homolog_fn, dtype=str, na_values='')
+        homolog = pd.read_csv(target_homolog_fn, dtype=str, na_values='')  # TODO: rely on homology genes...
         homolog.columns = [ref_col, target_col]
         homolog = homolog.dropna(axis='index')
 
@@ -171,12 +171,6 @@ if __name__ == '__main__':
                          output_dir='/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/derived')
     cdb.extact_fasta(
         '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/derived/consensus_regions.bed')
-    # cdb.get_tfs(
-    #     '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/derived/DP8480004851TR_L01_2.merged.atac.h5ad',
-    #     cdb.human_tfs,
-    #     '/dellfsqd2/ST_OCEAN/USER/zhangruihua/project/5.oryzias/4.blast/3.hg38/oryzias.hg38.MapGene.one2one',
-    #     species='hg', ref_col=0, target_col=1)
-    # cdb.make_motif_annotation(cdb.human_tbl, species='hg', ref_col=0, target_col=1)
     cdb.get_tfs(
         '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/derived/DP8480004851TR_L01_2.merged.atac.h5ad',
         '/dellfsqd2/ST_OCEAN/USER/zhangruihua/project/5.oryzias/4.blast/3.hg38/oryzias.hg38.MapGene.one2one',
