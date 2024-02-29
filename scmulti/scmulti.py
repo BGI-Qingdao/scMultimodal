@@ -7,7 +7,6 @@
 import os
 import sys
 import warnings
-
 warnings.filterwarnings("ignore")
 
 import glob
@@ -28,11 +27,11 @@ from pycisTopic.pseudobulk_peak_calling import (
     export_pseudobulk_one_sample
 )
 
-from handle_atac import (
-    RefGenome,
-    scATAC,
-    ScMultiParams
-)
+# from handle_atac import (
+#     RefGenome,
+#     scATAC,
+#     ScMultiParams
+# )
 from pycisTopic.pseudobulk_peak_calling import peak_calling
 from pycisTopic.iterative_peak_calling import *
 from pycisTopic.cistopic_class import *
@@ -124,7 +123,7 @@ class ScMulti:
         cell_data['celltype_label'] = cell_data[self.atac_anno_label]
         # Do not allow symbols other than _ exist in cell type name
         if celltype_name_seps is None:
-            celltype_name_seps = ['\s+', '-', '+']
+            celltype_name_seps = ['\s+', '-', '[+]']
         for sep in celltype_name_seps:
             cell_data[self.atac_anno_label].replace(sep, '_', regex=True, inplace=True)
 
@@ -559,15 +558,12 @@ class ScMulti:
         with custom annot a pandas DataFrame containing the extra Transcription_Start_Site column
         :return:
         """
-        custom_annotation = get_custom_annot(self.gtf_fn, self.custom_annotation_fn)
+        custom_annotation = get_custom_annot(self.gff_fn, self.custom_annotation_fn)
         custom_annot = custom_annotation.copy()
-        print(custom_annot)
         custom_annot['Strand'] = custom_annot['Strand'].replace('1', '+')  # TODO: is there a more robust way
         custom_annot['Strand'] = custom_annot['Strand'].replace('-1', '-')
         custom_annot['Transcription_Start_Site'] = custom_annot['Start']
-        print(custom_annot)
         pr_annot = pr.PyRanges(custom_annot)
-        print(pr_annot)
         return pr_annot
 
     def enrichment(self, chrom_header: tuple = ('chr'), species='custom'):
@@ -598,13 +594,17 @@ class ScMulti:
             annotation_version="2024"
         )
 
-    def network(self, meta_cell_split=' ', multi_ome_mode=False):
+    def network(self, meta_cell_split=' ', multi_ome_mode=False, tf_file=None,
+                upstream=[1000, 150000],downstream=[1000, 150000],
+                use_gene_boundaries=True):
+        if tf_file is None:
+            tf_file = self.tf_fn
         _stderr = sys.stderr
         null = open(os.devnull, 'wb')
         # ensure selected model exists
         if not self.cistopic_obj.selected_model:  #TODO: 为什么后面的步骤会改变这个数值
             self.cistopic_obj.selected_model = self.auto_best_topic()
-        print(self.cistopic_obj.selected_model)
+
         menr = dill.load(open(os.path.join(self.output_dir, 'motifs/menr.pkl'), 'rb'))
 
         # ------------------------------------------------
@@ -630,35 +630,36 @@ class ScMulti:
         # for species different from human, mouse or fruit fly
         from scenicplus.enhancer_to_gene import get_search_space
         pr_annot = self.get_pr_annot()
-        print(pr_annot)
+
         get_search_space(
             self.scplus_obj,
             pr_annot=pr_annot,  # see above
             pr_chromsizes=self.chromsizes,  # see above
-            upstream=[1000, 150000], downstream=[1000, 150000],
+            upstream=upstream, downstream=downstream,
+            use_gene_boundaries=use_gene_boundaries,
             biomart_host='http://sep2019.archive.ensembl.org/')
 
         from scenicplus.wrappers.run_scenicplus import run_scenicplus
         # run the wrapper like usual
         try:
-            sys.stderr = open(os.devnull, "w")  # silence stderr
+            # sys.stderr = open(os.devnull, "w")  # silence stderr
             run_scenicplus(
                 scplus_obj=self.scplus_obj,
                 variable=[self.variable],
                 species='custom',
                 assembly='custom',
-                tf_file=self.tf_fn,
+                tf_file=tf_file,
                 save_path=os.path.join(self.output_dir, 'scenicplus'),
                 biomart_host=None,
-                upstream=[1000, 150000],
-                downstream=[1000, 150000],
+                upstream=upstream,
+                downstream=downstream,
                 calculate_TF_eGRN_correlation=False,
                 calculate_DEGs_DARs=False,
                 export_to_loom_file=False,
                 export_to_UCSC_file=False,
                 n_cpu=24,
                 _temp_dir=None)
-            sys.stderr = sys.__stderr__  # unsilence stderr
+            # sys.stderr = sys.__stderr__  # unsilence stderr
         except Exception as e:
             # in case of failure, still save the object
             raise (e)
@@ -703,7 +704,3 @@ def add_strand(fn):  # TODO:
 def subset_list(target_list, index_list):
     X = list(map(target_list.__getitem__, index_list))
     return X
-
-
-if __name__ == '__main__':
-    pass
