@@ -76,7 +76,11 @@ data.atac <- ScaleData(data.atac)
 
 # ATAC analysis add gene annotation information
 gff_fn <- args$gff
-read_gff <- function(gff_fn, custom_column = NULL){
+/*
+choose_type, only choose annotation for a certain type, e.g. gene or CDS or mRNA
+custom_column, the name of gene id columns. Only use this parameter when you dont have a gene_name columns but have a gene_id column
+*/
+read_gff <- function(gff_fn, choose_type=NULL, custom_column = NULL){
     # read file
     gff = rtracklayer::import.gff(gff_fn)
 
@@ -84,8 +88,10 @@ read_gff <- function(gff_fn, custom_column = NULL){
     column_names = colnames(GenomicRanges::mcols(gff))
 
     # only select gene and protein coding genes
-    if ('type' %in% column_names){
-        gff = gff[gff$type=='gene']
+    if (!is.null(choose_type)){
+        if ('type' %in% column_names){
+            gff <- gff[gff$type == choose_type]
+        }
     }
     if ('gene_biotype' %in% column_names){
         gff = gff[gff$gene_biotype=='protein_coding']
@@ -112,7 +118,7 @@ read_gff <- function(gff_fn, custom_column = NULL){
     return (gff)
 }
 
-gene_gff <- read_gff(gff_fn, custom_column=args$gene_name_col)
+gene_gff <- read_gff(gff_fn, choose_type='gene', custom_column=args$gene_name_col)
 Annotation(data.atac) <- gene_gff
 
 # Dimension Reduction of the peak matrix via Latent Semantic Indexing
