@@ -7,6 +7,7 @@
 import os
 import sys
 import warnings
+
 warnings.filterwarnings("ignore")
 
 import glob
@@ -52,17 +53,17 @@ class ScMulti:
                  scparams,
                  atac_fn=None,
                  atac_cell_data=None,
-                 sample_id='a_liver',
+                 sample_id='sample_one',
                  fragments_dict=None,
                  sample_id_col='sample_id',
                  split_pattern=None,  # '-',
                  variable='celltype',
                  atac_anno_label='predicted.id',
                  gff_fn=None,
-                 macs_path='macs2'):  # params_obj=None
+                 macs_path='macs2',
+                 n_cpu=24):  # params_obj=None
         # input exp data
-        self.rna_fn = rna_fn
-        self.rna_data = sc.read_h5ad(self.rna_fn)
+        self.rna_data = sc.read_h5ad(rna_fn)
         self.atac_data = sc.read_h5ad(atac_fn)
 
         # species reference genome
@@ -89,6 +90,7 @@ class ScMulti:
 
         # Other attributes
         self.macs_path = macs_path
+        self.n_cpu = n_cpu
 
         # saving results
         self.work_dir = scparams.work_dir
@@ -136,13 +138,12 @@ class ScMulti:
             self.cell_data = cell_data
         return cell_data
 
-    def create_chromesize(self):  # , size_fn):
+    def create_chromesize(self):
         """
         Generate chrome size object (PyRange)
         :return:
         """
         chromsizes = pd.read_csv(self.chromsizes_fn, sep='\t', header=None)
-        self.genome_size = sum(chromsizes[1])
         chromsizes.columns = ['Chromosome', 'End']
         chromsizes['Start'] = [0] * chromsizes.shape[0]
         chromsizes = chromsizes.loc[:, ['Chromosome', 'Start', 'End']]
@@ -151,6 +152,19 @@ class ScMulti:
         print('Chrome Size:')
         print(self.chromsizes)
         return chromsizes
+
+    def get_genome_size(self, c_value=None):
+        """
+        Total genome size for the species. (not effective genome size)
+        :param c_value: C-value is the amount, in picograms (pg), of DNA contained within a haploid nucleus
+        :return:
+        """
+        if c_value is None:
+            chromsizes = pd.read_csv(self.chromsizes_fn, sep='\t', header=None)
+            self.genome_size = int(sum(chromsizes[1]))
+        else:
+            self.genome_size = c_value_to_bp(c_value)
+        return self.genome_size
 
     def one_sample(self, cell_type):
         """
@@ -221,7 +235,6 @@ class ScMulti:
         if not os.path.exists(os.path.join(self.output_dir, 'atac/pseudobulk_bed_files')):
             os.makedirs(os.path.join(self.output_dir, 'atac/pseudobulk_bed_files'))
         # to create pseudo bulk data, needs cell type annotation from scRNA-seq data
-        # celltypes = list(set(self.atac_data.obs[self.atac_anno_label]))
         if celltypes is None:
             celltypes = list(set(self.cell_data[self.atac_anno_label]))
         for celltype in celltypes:
@@ -309,12 +322,14 @@ class ScMulti:
             chain=False)
         self.path_to_regions = {self.sample_id: consensus_bed_path}
 
-    def create_cistopic_obj(self, n_cpu=10):
+    def create_cistopic_obj(self, n_cpu=None):
         """
 
         :param n_cpu:
         :return:
         """
+        if n_cpu is None:
+            n_cpu = self.n_cpu
         cistopic_obj = create_cistopic_object_from_fragments(
             path_to_fragments=self.fragments_dict[self.sample_id],
             path_to_regions=self.path_to_regions[self.sample_id],
@@ -339,7 +354,7 @@ class ScMulti:
         return cistopic_obj
 
     def get_topics(self,
-                   n_cpu=10,
+                   n_cpu=None,
                    n_topics=None,
                    n_iter=500,
                    random_state=555,
@@ -368,6 +383,8 @@ class ScMulti:
             metrics = ['Arun_2010', 'Cao_Juan_2009', 'Minmo_2011', 'loglikelihood']
         if n_topics is None:
             n_topics = [2, 4, 10, 16, 32, 48]
+        if n_cpu is None:
+            n_cpu = self.n_cpu
 
         # Run topic modeling. The purpose of this is twofold:
         # To find sets of co-accessible regions (topics), this will be used downstream as candidate enhancers
@@ -507,6 +524,11 @@ class ScMulti:
                     open(os.path.join(self.output_dir, 'atac/candidate_enhancers/markers_dict.pkl'), 'wb'))
 
     def create_region_sets(self, chrom_header: tuple):
+        """
+
+        :param chrom_header:
+        :return:
+        """
         # 1. Convert to dictionary of pyranges objects.
         region_bin_topics_otsu = pickle.load(
             open(os.path.join(self.output_dir, 'atac/candidate_enhancers/region_bin_topics_otsu.pkl'), 'rb'))
@@ -566,13 +588,15 @@ class ScMulti:
         pr_annot = pr.PyRanges(custom_annot)
         return pr_annot
 
-    def enrichment(self, chrom_header: tuple = ('chr'), species='custom'):
+    def enrichment(self, chrom_header: tuple = ('chr'), species='custom', n_cpu=None):
         """
 
         :param chrom_header:
         :param species:
         :return:
         """
+        if n_cpu is None:
+            n_cpu = self.n_cpu
         if self.gff_fn is None:
             raise ValueError("GTF/GFF file not provided")
         custom_annotation = get_custom_annot(self.gff_fn, self.custom_annotation_fn)
@@ -590,19 +614,36 @@ class ScMulti:
             dem_db_path=self.scores_db_fn,
             path_to_motif_annotations=self.motif_annotation_fn,
             run_without_promoters=True,
-            n_cpu=20,
+            n_cpu=n_cpu,
             annotation_version="2024"
         )
 
-    def network(self, meta_cell_split=' ', multi_ome_mode=False, tf_file=None,
-                upstream=[1000, 150000],downstream=[1000, 150000],
-                use_gene_boundaries=True):
+    def network(self,
+                meta_cell_split=' ',
+                multi_ome_mode=False,
+                tf_file=None,
+                upstream=[1000, 150000],
+                downstream=[1000, 150000],
+                use_gene_boundaries=True,
+                n_cpu=None):
+        """
+
+        :param meta_cell_split:
+        :param multi_ome_mode:
+        :param tf_file:
+        :param upstream:
+        :param downstream:
+        :param use_gene_boundaries:
+        :return:
+        """
+        if n_cpu is None:
+            n_cpu = self.n_cpu
         if tf_file is None:
             tf_file = self.tf_fn
         _stderr = sys.stderr
         null = open(os.devnull, 'wb')
         # ensure selected model exists
-        if not self.cistopic_obj.selected_model:  #TODO: 为什么后面的步骤会改变这个数值
+        if not self.cistopic_obj.selected_model:  # TODO: 为什么后面的步骤会改变这个数值
             self.cistopic_obj.selected_model = self.auto_best_topic()
 
         menr = dill.load(open(os.path.join(self.output_dir, 'motifs/menr.pkl'), 'rb'))
@@ -611,7 +652,7 @@ class ScMulti:
         #        Create the SCENIC+ object
         # ------------------------------------------------
         from scenicplus.scenicplus_class import create_SCENICPLUS_object
-        if self.rna_data.raw is None:  #TODO: why use raw?
+        if self.rna_data.raw is None:  # TODO: why use raw?
             gex_data = self.rna_data
         else:
             gex_data = self.rna_data.raw.to_adata()
@@ -627,7 +668,6 @@ class ScMulti:
         # function to convert scATAC-seq barcodes to scRNA-seq ones
         # scplus_obj.X_EXP = np.array(scplus_obj.X_EXP.todense())
 
-        # for species different from human, mouse or fruit fly
         from scenicplus.enhancer_to_gene import get_search_space
         pr_annot = self.get_pr_annot()
 
@@ -657,7 +697,7 @@ class ScMulti:
                 calculate_DEGs_DARs=False,
                 export_to_loom_file=False,
                 export_to_UCSC_file=False,
-                n_cpu=24,
+                n_cpu=n_cpu,
                 _temp_dir=None)
             # sys.stderr = sys.__stderr__  # unsilence stderr
         except Exception as e:
@@ -699,6 +739,17 @@ def add_strand(fn):  # TODO:
     df = pd.read_csv(fn, compression='gzip', sep='\t', header=None)
     df[5] = '+'
     df.to_csv(fn, index=False, compression='gzip', header=None, sep='\t')
+
+
+def c_value_to_bp(c_value: float) -> int:
+    """
+    Convert C-value (in picograms/pg) into base pairs (bp)
+    Animal genome size data are available at https://www.genomesize.com/index.php
+    :param c_value:
+    :return:
+    """
+    genome_size = c_value * 0.978 * 1e9
+    return int(genome_size)
 
 
 def subset_list(target_list, index_list):
