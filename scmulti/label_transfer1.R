@@ -76,15 +76,14 @@ data.atac <- ScaleData(data.atac)
 
 # ATAC analysis add gene annotation information
 gff_fn <- args$gff
-/*
-choose_type, only choose annotation for a certain type, e.g. gene or CDS or mRNA
-custom_column, the name of gene id columns. Only use this parameter when you dont have a gene_name columns but have a gene_id column
-*/
+
+# choose_type, only choose annotation for a certain type, e.g. gene or CDS or mRNA
+# custom_column, the name of gene id columns. Only use this parameter when you dont have a gene_name columns but have a gene_id column
 read_gff <- function(gff_fn, choose_type=NULL, custom_column = NULL){
     # read file
     gff = rtracklayer::import.gff(gff_fn)
 
-    # ensure 'gene_name', 'gene_biotype' are in the metadata columns
+    # ensure 'gene_name', 'gene_id', 'gene_biotype' are in the metadata columns
     column_names = colnames(GenomicRanges::mcols(gff))
 
     # only select gene and protein coding genes
@@ -113,6 +112,15 @@ read_gff <- function(gff_fn, choose_type=NULL, custom_column = NULL){
         }
       } else {
         stop("Unable to assign gene_name. No suitable metadata column found.")
+      }
+    }
+
+    # Check if 'gene_id' is missing and update it based on other columns
+    if (!'gene_id' %in% column_names){
+      if ("gene_name" %in% column_names) {
+        gff$gene_id <- gff$gene_name
+      } else {
+        print("Unable to assign gene_id. No suitable metadata column found.")
       }
     }
     return (gff)
@@ -157,12 +165,12 @@ celltype.predictions <- TransferData(anchorset = transfer.anchors, refdata = dat
 print('-----Finished transferring data-----')
 data.atac <- AddMetaData(data.atac, metadata = celltype.predictions)
 
-saveRDS(data.atac, paste0(args$output, args$name, '.merged.atac.rds'))
+saveRDS(data.atac, file.path(args$output, paste0(args$name, '.merged.atac.rds')))
 print('-----Saved results to disk-----')
 
 
 plot_annotation <- function(merged.atac, data.rna){
-  png(filename=paste0(args$output, "atac_predicted_id.png"))
+  png(filename=file.path(args$output, "atac_predicted_id.png"))
   p1 <- DimPlot(merged.atac, group.by = "predicted.id", label = TRUE) + NoLegend() + ggtitle("Predicted annotation")
   print(p1)
   dev.off()
@@ -175,5 +183,5 @@ plot_umap <- function(data.rna, merged.atac){
   p2 <- DimPlot(merged.atac, group.by = "orig.ident", label = FALSE) + NoLegend() + ggtitle("ATAC")
   p1 + p2
   plot <- (p1 + p2) & xlab("UMAP 1") & ylab("UMAP 2") & theme(axis.title = element_text(size = 18))
-  ggsave(filename = paste0(args$output, "atacseq_b4_integration.jpg"), height = 7, width = 12, plot = plot, quality = 50)
+  ggsave(filename = file.path(args$output, "atacseq_b4_integration.jpg"), height = 7, width = 12, plot = plot, quality = 50)
 }

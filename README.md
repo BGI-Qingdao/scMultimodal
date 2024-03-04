@@ -16,3 +16,19 @@ python run.py -o results_dir \
         --upstream 0 1500 \
         --downstream 100 15000
 ```
+
+To run label transfer:
+```angular2html
+Rscript label_transfer.R --rna scrna.anno.rds \
+    --atac integrated.atac.rds \
+    -m Metadata.tsv \
+    --fragments fragments.tsv.gz \
+    --gff species_gene_annotation.gtf \
+    --name projectA \
+    -o results_dir/
+```
+
+To integrate multiple ATAC datasets (by different libraries):
+```angular2html
+Rscript integrate.R -o name --list datasets_ids.txt
+```
