@@ -30,5 +30,26 @@ Rscript label_transfer.R --rna scrna.anno.rds \
 
 To integrate multiple ATAC datasets (by different libraries):
 ```angular2html
-Rscript integrate.R -o name --list datasets_ids.txt
+    Rscript integrate.R -n name --list datasets_ids.txt --data_path /path/to/samples/
+```
+Example of a `datasets_ids.txt`:<br>
+```
+sample_id_1
+sample_id_2
+sample_id_3
+...
+```
+Example of a data path:<br>
+```
+ |--/path/to/samples/
+    |--sample_id_1
+       |--Peak_matrix
+          |--barcodes.tsv
+          |--matrix.mtx
+          |--peak.bed
+    |--sample_id_2
+       |--Peak_matrix
+          |--barcodes.tsv
+          |--matrix.mtx
+          |--peak.bed
 ```
