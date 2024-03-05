@@ -17,7 +17,7 @@ import scanpy as sc
 import numpy as np
 import pyranges as pr
 import pandas as pd
-from typing import Optional
+from typing import Optional, Union, List
 
 from pycisTopic.utils import (
     read_fragments_from_file,
@@ -61,7 +61,8 @@ class ScMulti:
                  atac_anno_label='predicted.id',
                  gff_fn=None,
                  macs_path='macs2',
-                 n_cpu=24):  # params_obj=None
+                 n_cpu=24,
+                 c_value=None):  # params_obj=None
         # input exp data
         self.rna_data = sc.read_h5ad(rna_fn)
         self.atac_data = sc.read_h5ad(atac_fn)
@@ -69,9 +70,12 @@ class ScMulti:
         # species reference genome
         self.fasta = refgenome_obj.fasta_fn
         self.chromsizes_fn = refgenome_obj.chromsize_fn
+        if self.chromsizes_fn is None:
+            raise FileNotFoundError('Chromosome size file not found')
         self.chromsizes = None
         self.genome_size = None
         self.gff_fn = gff_fn
+        self.c_value = c_value
 
         # ATAC meta data
         self.cell_data = atac_cell_data
@@ -112,11 +116,16 @@ class ScMulti:
         self.motif_annotation_fn = ''
         self.tf_fn = ''
 
-    def create_atac_cell_data(self, inplace=True, celltype_name_seps=None):
+        # methods
+        # self.create_atac_cell_data()
+        # self.create_chromesize()
+        # self.get_genome_size(c_value=c_value)
+
+    def create_atac_cell_data(self, inplace=True, celltype_name_seps=Optional[Union[str, List[str]]]):
         """
         Extract needed annotation information (cell types, barcodes, sample ids...) from ATAC data.
         :param inplace:
-        :param celltype_name_seps:
+        :param celltype_name_seps: delimiter in cell type names. could be a string '-' or a list of str ['-','.']
         :return:
         """
         cell_data = self.atac_data.obs.copy()
@@ -124,10 +133,19 @@ class ScMulti:
         cell_data[self.atac_anno_label] = cell_data[self.atac_anno_label].astype(str)
         cell_data['celltype_label'] = cell_data[self.atac_anno_label]
         # Do not allow symbols other than _ exist in cell type name
-        if celltype_name_seps is None:
-            celltype_name_seps = ['\s+', '-', '[+]']
+        if isinstance(celltype_name_seps, str):
+            celltype_name_seps = list(celltype_name_seps)
+        elif celltype_name_seps is None:
+            celltype_name_seps = ['\s+', '-']
+
+        # special characters
+        pattern = r'[!@#$%^&*.]'
+        cell_data[self.atac_anno_label] = cell_data[self.atac_anno_label].str.replace(pattern, '_', regex=True)
         for sep in celltype_name_seps:
-            cell_data[self.atac_anno_label].replace(sep, '_', regex=True, inplace=True)
+            if sep not in pattern:
+                cell_data[self.atac_anno_label].replace(sep, '_', regex=True, inplace=True)
+        # remove + in cell type name
+        cell_data[self.atac_anno_label].replace('[+]', '', regex=True, inplace=True)
 
         cell_data['barcode'] = list(cell_data.index)
         cell_data['barcode'] = cell_data['barcode'].astype(str)
@@ -232,8 +250,10 @@ class ScMulti:
         Generate pseudobulk peaks for all cell types in data
         :return:
         """
-        if not os.path.exists(os.path.join(self.output_dir, 'atac/pseudobulk_bed_files')):
-            os.makedirs(os.path.join(self.output_dir, 'atac/pseudobulk_bed_files'))
+        # if not os.path.exists(os.path.join(self.output_dir, 'pseudobulk_bed_files')):
+        #     os.makedirs(os.path.join(self.output_dir, 'pseudobulk_bed_files'))
+        # if not os.path.exists(os.path.join(self.output_dir, 'pseudobulk_bw_files')):
+        #     os.makedirs(os.path.join(self.output_dir, 'pseudobulk_bw_files'))
         # to create pseudo bulk data, needs cell type annotation from scRNA-seq data
         if celltypes is None:
             celltypes = list(set(self.cell_data[self.atac_anno_label]))
@@ -253,7 +273,7 @@ class ScMulti:
         """
 
         :param convert_strand:
-        :param genome_size:
+        :param :
         :param input_format:
         :param shift:
         :param ext_size:
@@ -265,6 +285,8 @@ class ScMulti:
         import subprocess
         if genome_size is None:
             genome_size = self.genome_size
+        if self.genome_size is None:
+            self.get_genome_size(c_value=self.c_value)
         paths = os.path.join(self.output_dir, 'pseudobulk_bed_files')
         out = os.path.join(self.output_dir, 'consensus_peak_calling/narrow_peaks')
         self.narrow_peaks_paths = out
@@ -283,8 +305,6 @@ class ScMulti:
                         e.cmd, e.returncode, e.output
                     )
                 )
-            finally:
-                return out
 
     def custom_consensus_peaks(self, narrow_peaks_paths=None, peak_half_width=250):
         """
@@ -311,10 +331,12 @@ class ScMulti:
                 'Summit']
 
         # Get consensus peaks
+        print('self.chromsizes')
+        print(self.chromsizes)
         sys.stderr = open(os.devnull, "w")  # silence stderr
         consensus_peaks = get_consensus_peaks(narrow_peaks_dict, peak_half_width, chromsizes=self.chromsizes)
         sys.stderr = sys.__stderr__  # unsilence stderr
-        consensus_bed_path = os.path.join(self.output_dir, 'consensus_regions.bed')
+        consensus_bed_path = os.path.join(self.output_dir, 'consensus_peak_calling/consensus_regions.bed')
         consensus_peaks.to_bed(
             path=consensus_bed_path,
             keep=True,
