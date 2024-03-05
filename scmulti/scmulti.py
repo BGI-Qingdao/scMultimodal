@@ -28,12 +28,6 @@ from pycisTopic.pseudobulk_peak_calling import (
     export_pseudobulk_one_sample
 )
 
-# from handle_atac import (
-#     RefGenome,
-#     scATAC,
-#     ScMultiParams
-# )
-from pycisTopic.pseudobulk_peak_calling import peak_calling
 from pycisTopic.iterative_peak_calling import *
 from pycisTopic.cistopic_class import *
 from pycisTopic.cistopic_class import *
@@ -121,7 +115,7 @@ class ScMulti:
         # self.create_chromesize()
         # self.get_genome_size(c_value=c_value)
 
-    def create_atac_cell_data(self, inplace=True, celltype_name_seps=Optional[Union[str, List[str]]]):
+    def create_atac_cell_data(self, celltype_name_seps: Optional[Union[str, List[str]]]):
         """
         Extract needed annotation information (cell types, barcodes, sample ids...) from ATAC data.
         :param inplace:
@@ -133,27 +127,26 @@ class ScMulti:
         cell_data[self.atac_anno_label] = cell_data[self.atac_anno_label].astype(str)
         cell_data['celltype_label'] = cell_data[self.atac_anno_label]
         # Do not allow symbols other than _ exist in cell type name
-        if isinstance(celltype_name_seps, str):
-            celltype_name_seps = list(celltype_name_seps)
-        elif celltype_name_seps is None:
-            celltype_name_seps = ['\s+', '-']
-
-        # special characters
-        pattern = r'[!@#$%^&*.]'
-        cell_data[self.atac_anno_label] = cell_data[self.atac_anno_label].str.replace(pattern, '_', regex=True)
-        for sep in celltype_name_seps:
-            if sep not in pattern:
-                cell_data[self.atac_anno_label].replace(sep, '_', regex=True, inplace=True)
-        # remove + in cell type name
-        cell_data[self.atac_anno_label].replace('[+]', '', regex=True, inplace=True)
+        cell_data[self.atac_anno_label].str.replace("[^A-Za-z0-9]+", "_", regex=True, inplace=True)
+        # if isinstance(celltype_name_seps, str):
+        #     celltype_name_seps = list(celltype_name_seps)
+        # if celltype_name_seps is None:
+        #     celltype_name_seps = ['\s+', '-']
+        # # special characters
+        # pattern = r'[!@#$%^&*.]'
+        # cell_data[self.atac_anno_label] = cell_data[self.atac_anno_label].str.replace(pattern, '_', regex=True)
+        # for sep in celltype_name_seps:
+        #     if sep not in pattern:
+        #         cell_data[self.atac_anno_label].replace(sep, '_', regex=True, inplace=True)
+        # # remove + in cell type name
+        # cell_data[self.atac_anno_label].replace('[+]', '', regex=True, inplace=True)
 
         cell_data['barcode'] = list(cell_data.index)
         cell_data['barcode'] = cell_data['barcode'].astype(str)
         # set data type of the celltype column to str, otherwise the export_pseudobulk function will complain.
         cell_data[self.variable] = cell_data[self.atac_anno_label]
-
-        if inplace:
-            self.cell_data = cell_data
+        print(cell_data)
+        self.cell_data = cell_data
         return cell_data
 
     def create_chromesize(self):
