@@ -16,7 +16,17 @@ python run.py -o results_dir \
         --upstream 0 1500 \
         --downstream 100 15000
 ```
-
+To make a cisTarget database for species other than human or mouse:
+```angular2html
+python custom_databases.py --prefix speciesX
+    --fasta reference.fasta
+    --output /path/to/save/
+    --consensus_regions consensus_regions.bed
+    --ortholog human_speciesX_ortholog.tsv
+    --ref_species hg
+    --atac atac.h5ad
+    --bedpath /path/to/bedtools
+```
 To run label transfer:
 ```angular2html
 Rscript label_transfer.R --rna scrna.anno.rds \
@@ -30,7 +40,7 @@ Rscript label_transfer.R --rna scrna.anno.rds \
 
 To integrate multiple ATAC datasets (by different libraries):
 ```angular2html
-    Rscript integrate.R -n name --list datasets_ids.txt --data_path /path/to/samples/
+Rscript integrate.R -n name --list datasets_ids.txt --data_path /path/to/samples/
 ```
 Example of a `datasets_ids.txt`:<br>
 ```
