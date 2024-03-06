@@ -7,6 +7,8 @@ import os
 import subprocess
 import pandas as pd
 from typing import Union, Optional
+import argparse
+import sys
 
 
 class CustomDatabase:
@@ -125,7 +127,8 @@ class CustomDatabase:
 
         with open(ref_tfs, 'r') as f:
             reference_tfs = f.read().splitlines()
-        homolog_tfs = list(set(ah_anno[ah_anno[target_col].isin(reference_tfs)][ref_col]))  # TODO: better way to get TFs
+        homolog_tfs = list(
+            set(ah_anno[ah_anno[target_col].isin(reference_tfs)][ref_col]))  # TODO: better way to get TFs
         self.tf_list = f'{self.db_prefix}_TFs.txt'
         with open(os.path.join(self.saving_dir, self.tf_list), 'w') as f:
             f.writelines('\n'.join(homolog_tfs))
@@ -165,16 +168,34 @@ class CustomDatabase:
         ref_tbl_df.to_csv(os.path.join(self.saving_dir, self.motif_anno), sep='\t', index=False)
 
 
-if __name__ == '__main__':
-    cdb = CustomDatabase('OM',
-                         fasta='/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/DATA/03.Oryzias_melastigma/GCF_002922805.2_ASM292280v2_genomic.fna',
-                         output_dir='/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/derived')
-    cdb.extact_fasta(
-        '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/derived/consensus_regions.bed')
-    cdb.get_tfs(
-        '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/derived/DP8480004851TR_L01_2.merged.atac.h5ad',
-        '/dellfsqd2/ST_OCEAN/USER/zhangruihua/project/5.oryzias/4.blast/3.hg38/oryzias.hg38.MapGene.one2one',
-        ref_species='hg', ref_col=0, target_col=1, header=True)
-    cdb.make_motif_annotation(ref_species='hg', ref_col=0, target_col=1)
-
+def create_custom_database(prefix, fasta, output_dir, consensus_regions_path, atac_fn, ortholog_groups_fn,
+                           ref_species='hg', bed='/dellfsqd2/ST_OCEAN/USER/liyao1/tools/bedtools'):
+    cdb = CustomDatabase(prefix,
+                         fasta=fasta,
+                         output_dir=output_dir, bedtool_path=bed)
+    cdb.extact_fasta(consensus_regions_path)
+    cdb.get_tfs(atac_fn, ortholog_groups_fn, ref_species=ref_species, ref_col=0, target_col=1, header=True)
+    cdb.make_motif_annotation(ref_species=ref_species, ref_col=0, target_col=1)
     cdb.create_feathers()
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        prog='scmulti',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='',
+        add_help=True,
+    )
+    parser.add_argument('-p', '--prefix', help='species name')
+    parser.add_argument('--fasta', help='reference genome fasta file')
+    parser.add_argument('-o', '--output', help='output directory to save all the intermediate and final results.')
+    parser.add_argument('-c', '--consensus_regions', help='consensus_regions.bed file')
+    parser.add_argument('--ortholog',
+                        help='files contains target species gene name/id and reference gene name/id (hg or mm)')
+    parser.add_argument('-ref', '--ref_species', default='hg', help='human or mouse')
+    parser.add_argument('--atac', help='scATAC-seq data h5ad file')
+    parser.add_argument('--bedpath', default='/dellfsqd2/ST_OCEAN/USER/liyao1/tools/bedtools', help='path to bedtools')
+    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
+
+    create_custom_database(args.prefix, args.fasta, args.output, args.consensus_regions, args.atac, args.ortholog,
+                           ref_species=args.ref_species, bed=args.bedpath)
