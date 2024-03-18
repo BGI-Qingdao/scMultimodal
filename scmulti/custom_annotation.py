@@ -5,8 +5,17 @@
 # @File: evo_fish/custom_annotation.py
 import pandas as pd
 
+"""
+#gtf-version 2.2
+#!genome-build ASM292280v2
+#!genome-build-accession NCBI_Assembly:GCF_002922805.2
+#!annotation-source NCBI Oryzias melastigma Annotation Release 101
+NC_050512.1	Gnomon	gene	3573	25897	.	+	.	gene_id "xpnpep1"; transcript_id ""; db_xref "GeneID:112137500"; gbkey "Gene"; gene "xpnpep1"; gene_biotype "protein_coding"; 
+NC_050512.1	Gnomon	transcript	3573	25897	.	+	.	gene_id "xpnpep1"; transcript_id "XM_024259849.2"; db_xref "GeneID:112137500"; gbkey "mRNA"; gene "xpnpep1"; model_evidence "Supporting evidence includes similarity to: 12 ESTs, 12 Proteins, and 100% coverage of the annotated genomic feature by RNAseq alignments, including 63 samples with support for all annotated introns"; product "X-prolyl aminopeptidase (aminopeptidase P) 1, soluble, transcript variant X2"; transcript_biotype "mRNA"; 
+"""
 
-def get_custom_annot(gtf_fn: str, out_fn: str, comment="#") -> pd.DataFrame:
+
+def get_custom_annot(gtf_fn: str, out_fn: str, comment="#", gene_name_idx: int=0, gene_name_sep: str=' ') -> pd.DataFrame:
     """
     :param gtf_fn:
     :param out_fn:
@@ -33,8 +42,11 @@ def get_custom_annot(gtf_fn: str, out_fn: str, comment="#") -> pd.DataFrame:
     """
     df = pd.read_csv(gtf_fn, header=None, sep='\t', comment=comment)
     # extract gene names
-    df[9] = df[8].str.split(';', expand=True)[1]
-    df[9] = df[9].str.split(' ', expand=True)[2]
+    df[9] = df[8].str.split(';', expand=True)[gene_name_idx]
+    # df[9] = df[9].str.split(gene_name_sep, expand=True)[2]
+    # 2024-03-15
+    df[9] = df[9].str.strip()
+    df[9] = df[9].str.split(gene_name_sep, expand=True)[1]
     df[9] = df[9].str.replace('"', '')
     # subset only essential columns
     new = df[[0, 3, 4, 6, 9, 2]]
