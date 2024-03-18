@@ -16,6 +16,8 @@ import argparse
 # from scmulti import ScMulti
 from scenicplus.RSS import *
 from scenicplus.plotting.correlation_plot import *
+from scmulti import match_key
+from scenicplus.cistromes import *
 
 COLORS = ["#065143", "#70B77E", "#E0A890", "#F56476", "#CE1483",
           '#d60000', '#e2afaf', '#018700', '#a17569', '#e6a500', '#004b00',
@@ -75,23 +77,25 @@ class DownScMulti:
             scplus_obj=self.scplus_obj,
             variable='celltype',
             auc_key='eRegulon_AUC_filtered',
-            signature_key='Gene_based')
+            signature_key='Gene_based',
+            nr_cells=1)
         generate_pseudobulks(
             scplus_obj=self.scplus_obj,
             variable='celltype',
             auc_key='eRegulon_AUC_filtered',
-            signature_key='Region_based')
+            signature_key='Region_based',
+            nr_cells=1)
 
         TF_cistrome_correlation(
             self.scplus_obj,
-            use_pseudobulk=True,
+            use_pseudobulk=False,  # 2024-03-18: use_pseudobulk=True,
             variable='celltype',
             auc_key='eRegulon_AUC_filtered',
             signature_key='Gene_based',
             out_key='filtered_gene_based')
         TF_cistrome_correlation(
             self.scplus_obj,
-            use_pseudobulk=True,
+            use_pseudobulk=False,  # 2024-03-18: use_pseudobulk=True,
             variable='celltype',
             auc_key='eRegulon_AUC_filtered',
             signature_key='Region_based',
@@ -106,6 +110,49 @@ class DownScMulti:
         #     'rho': [-0.75, 0.70],
         #     'n_targets': 0
         # }
+        thresholds = {
+            'rho': [-0.10, 0.10],
+            'n_targets': 0
+        }
+        return n_targets, rho, adj_pval, thresholds
+
+    def calculate2(self):
+        from scenicplus.preprocessing.filtering import apply_std_filtering_to_eRegulons
+        apply_std_filtering_to_eRegulons(self.scplus_obj)
+        from scenicplus.eregulon_enrichment import score_eRegulons
+        region_ranking = dill.load(open(os.path.join(self.work_dir, 'scenicplus/region_ranking.pkl'),
+                                        'rb'))  # load ranking calculated using the wrapper function
+        gene_ranking = dill.load(open(os.path.join(self.work_dir, 'scenicplus/gene_ranking.pkl'),
+                                      'rb'))  # load ranking calculated using the wrapper function
+        score_eRegulons(self.scplus_obj,
+                        ranking=region_ranking,
+                        eRegulon_signatures_key='eRegulon_signatures_filtered',
+                        key_added='eRegulon_AUC_filtered',
+                        enrichment_type='region',
+                        auc_threshold=0.05,
+                        normalize=False,
+                        n_cpu=5)
+        score_eRegulons(self.scplus_obj,
+                        gene_ranking,
+                        eRegulon_signatures_key='eRegulon_signatures_filtered',
+                        key_added='eRegulon_AUC_filtered',
+                        enrichment_type='gene',
+                        auc_threshold=0.05,
+                        normalize=False,
+                        n_cpu=5)
+
+        eregulon_correlation(self.scplus_obj,
+                             auc_key='eRegulon_AUC',
+                             signature_key1='Gene_based',
+                             signature_key2='Region_based',
+                             nSignif=3,
+                             out_key='Unfiltered')
+
+        n_targets = [int(x.split('(')[1].replace('r)', '')) for x in
+                     self.scplus_obj.uns['TF_cistrome_correlation']['filtered_region_based']['Cistrome']]
+        rho = self.scplus_obj.uns['TF_cistrome_correlation']['filtered_region_based']['Rho'].to_list()
+        adj_pval = self.scplus_obj.uns['TF_cistrome_correlation']['filtered_region_based']['Adjusted_p-value'].to_list()
+
         thresholds = {
             'rho': [-0.30, 0.30],
             'n_targets': 0
@@ -126,7 +173,7 @@ class DownScMulti:
         ax.text(x=thresholds['rho'][1], y=max(n_targets), s=str(thresholds['rho'][1]))
         sns.despine(ax=ax)
         fig.colorbar(sc, label='-log10(adjusted_pvalue)', ax=ax)
-        plt.savefig('cor_coe.png')
+        plt.savefig(os.path.join(self.saving_dir, 'cor_coe.png'))
 
         selected_cistromes = self.scplus_obj.uns['TF_cistrome_correlation']['filtered_region_based'].loc[
             np.logical_or(
@@ -166,19 +213,23 @@ class DownScMulti:
             figsize=(50, 50),
             orientation='vertical',
             save=os.path.join(self.saving_dir, 'heatmap.pdf'),
-            index_order=self.variable)
+            index_order=self.celltypes)
 
     # ---------------------------------------------------------------
     # 3. rss plot
     # ---------------------------------------------------------------
-    def plot_rss(self, **kwargs):
+    def plot_erss(self, **kwargs):
         regulon_specificity_scores(
             self.scplus_obj,
             variable=self.variable,
             auc_key='eRegulon_AUC_filtered',
             signature_keys=['Region_based'],
-            selected_regulons=[x for x in self.scplus_obj.uns['selected_eRegulon']['Region_based'] if '-' not in x],
-            out_key_suffix='_filtered',
+            selected_regulons=[x for x in scplus_obj.uns['selected_eRegulon']['Region_based'] if '-' not in x],
+            out_key_suffix='_filtered')
+
+        plot_rss(
+            self.scplus_obj,
+            f'{self.variable}_filtered',
             save=os.path.join(self.saving_dir, 'rss.pdf'),
             **kwargs)
 
@@ -188,9 +239,9 @@ class DownScMulti:
     def plot_jaccard_heatmap(self, **kwargs):
         flat_list = lambda t: [item for sublist in t for item in sublist]
         selected_markers = list(set(flat_list(
-            [self.scplus_obj.uns['RSS']['celltype_filtered'].loc[celltype].sort_values(ascending=False).head(
+            [self.scplus_obj.uns['RSS'][f'{self.variable}_filtered'].loc[celltype].sort_values(ascending=False).head(
                 30).index.to_list()
-             for celltype in self.scplus_obj.uns['RSS']['celltype_filtered'].index])))
+             for celltype in self.scplus_obj.uns['RSS'][f'{self.variable}_filtered'].index])))
         jaccard_heatmap(
             self.scplus_obj,
             method='intersect',
@@ -254,7 +305,8 @@ class DownScMulti:
         plot_eRegulon(
             scplus_obj=self.scplus_obj,
             reduction_name='eRegulons_tSNE',
-            selected_regulons=selected_regulons, # ['MSTRG.2388_extended_+', 'MSTRG.8533_extended_+', 'nbisL1-mrna-14072_extended_+','MSTRG.18385_extended_+', 'MSTRG.14903_extended_+'],
+            selected_regulons=selected_regulons,
+            # ['MSTRG.2388_extended_+', 'MSTRG.8533_extended_+', 'nbisL1-mrna-14072_extended_+','MSTRG.18385_extended_+', 'MSTRG.14903_extended_+'],
             scale=True,
             auc_key='eRegulon_AUC_filtered',
             save=os.path.join(self.saving_dir, 'eRegulon_activity.pdf'), **kwargs)
@@ -263,32 +315,38 @@ class DownScMulti:
     # 8. Plot Network
     # ---------------------------------------------------------------
     def plot_network(self, target_celltype, target_regulons: list, n_top_features=1000, figsize=(20, 20)):
-        network_color = ['Orange', 'Purple', 'Red', 'Yellow', 'Blue', 'Green', 'Pink', 'Gray', 'Brown']
-        if len(network_color) < len(target_regulons):
-            print('Warning! not enough color for each regulon')
+        # plot hvg and hvr
         from pycisTopic.diff_features import find_highly_variable_features
         hvr = find_highly_variable_features(
             self.scplus_obj.to_df('ACC').loc[list(set(self.scplus_obj.uns['eRegulon_metadata_filtered']['Region']))],
             n_top_features=n_top_features,
-            plot=True, save=os.path.join(self.saving_dir, 'hvr.pdf'))
+            plot=False, save=os.path.join(self.saving_dir, 'hvr.pdf'))
         hvg = find_highly_variable_features(
             self.scplus_obj.to_df('EXP')[list(set(self.scplus_obj.uns['eRegulon_metadata_filtered']['Gene']))].T,
             n_top_features=n_top_features,
-            plot=True, save=os.path.join(self.saving_dir, 'hvg.pdf'))
-        from scenicplus.networks import create_nx_tables, create_nx_graph, plot_networkx, export_to_cytoscape
+            plot=False, save=os.path.join(self.saving_dir, 'hvg.pdf'))
 
+
+        from scenicplus.networks import create_nx_tables, create_nx_graph, plot_networkx, export_to_cytoscape
         nx_tables = create_nx_tables(
             scplus_obj=self.scplus_obj,
             eRegulon_metadata_key='eRegulon_metadata_filtered',
-            subset_regions=hvr,
+            subset_regions=hvr,  # subset_eRegulons=None, 使用target_regulons
             subset_genes=hvg,
             add_differential_gene_expression=True,
             add_differential_region_accessibility=True,
             differential_variable=[self.variable])
+        # print(nx_tables)
+        # pickle.dump(nx_tables, open(os.path.join(self.saving_dir, 'nx_tables.pkl'), 'wb'))
 
         # assign regulons color
-        category_color = dict(zip(target_regulons, network_color))
-
+        # network_color = ['Orange', 'Purple', 'Red', 'Yellow', 'Blue', 'Green', 'Pink', 'Gray', 'Brown']
+        # if len(network_color) < len(target_regulons):
+        #     print('Warning! not enough color for each regulon')
+        #     target_regulons = target_regulons[:len(network_color)]
+        #     print(target_regulons)
+        # category_color = dict(zip(target_regulons, network_color))
+        category_color = None
         # make the big dictionary
         G, pos, edge_tables, node_tables = create_nx_graph(nx_tables,
                                                            use_edge_tables=['TF2R', 'R2G'],
@@ -342,8 +400,51 @@ class DownScMulti:
                                                            scale_position_by=250)
 
         plt.figure(figsize=figsize)
-        plot_networkx(G, pos)
-        export_to_cytoscape(G, pos, out_file=os.path.join(self.work_dir, f'scenicplus/network_{target_celltype}.cys'))
+        plot_networkxx(G, pos, save=os.path.join(self.saving_dir, f'{target_celltype}_network.pdf'))
+        export_to_cytoscape(G, pos, out_file=os.path.join(self.saving_dir, f'{target_celltype}_network.cys'))
+
+
+def select_regulons(scplus_obj, thresholds=None):
+    if thresholds is None:
+        thresholds = {'rho': [-0.10, 0.10], 'n_targets': 0}
+    selected_cistromes = scplus_obj.uns['TF_cistrome_correlation']['filtered_region_based'].loc[
+        np.logical_or(
+            scplus_obj.uns['TF_cistrome_correlation']['filtered_region_based']['Rho'] > thresholds['rho'][1],
+            scplus_obj.uns['TF_cistrome_correlation']['filtered_region_based']['Rho'] < thresholds['rho'][0]
+        )]['Cistrome'].to_list()
+    selected_eRegulons = [x.split('_(')[0] for x in selected_cistromes]
+    return selected_eRegulons
+
+
+def plot_networkxx(G, pos, save='network.pdf'):
+    """
+    A function to plot networks with networkx
+
+    Parameters
+    ---------
+    G: Graph
+        A networkx graph
+    pos: Dict
+        Position values
+    """
+    import networkx as nx
+    nx.draw_networkx_nodes(G, pos, node_color=nx.get_node_attributes(G, 'color').values(),
+                           node_size=list(nx.get_node_attributes(G, 'size').values()),
+                           node_shape='D')
+    nx.draw_networkx_edges(G, pos, edge_color=nx.get_edge_attributes(G, 'color').values(),
+                           width=list(nx.get_edge_attributes(G, 'width').values()))
+    fontsize_d = {y: x['size'] for x, y in zip(list(nx.get_node_attributes(G, 'font').values()),
+                                               list(nx.get_node_attributes(G, 'label').values())) if x['size'] != 0.0}
+    fontcolor_d = {y: x['color'] for x, y in zip(list(nx.get_node_attributes(G, 'font').values()),
+                                                 list(nx.get_node_attributes(G, 'label').values())) if x['size'] != 0.0}
+    for node, (x, y) in pos.items():
+        if node in fontsize_d.keys():
+            plt.text(x, y, node, fontsize=fontsize_d[node], color=fontcolor_d[node], ha='center', va='center')
+    ax = plt.gca()
+    ax.margins(0.11)
+    plt.tight_layout()
+    plt.axis("off")
+    plt.savefig(save, format='pdf')
 
 
 if __name__ == '__main__':
@@ -354,29 +455,37 @@ if __name__ == '__main__':
         add_help=True,
     )
     parser.add_argument('-o', '--output', help='output directory to save all the intermediate and final results.')
-    parser.add_argument('--atac', help='scATAC-seq data h5ad file')
-    parser.add_argument('-v', '--variable', default='celltype', help='')
+    parser.add_argument('--scenic', help='scplus object')
+    parser.add_argument('-v', '--variable', default='celltype', help='Meta data label storing cell type information')
+    parser.add_argument('-ct', '--celltypes', nargs='*', type=str, default=None, help='Interested cell types')
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
 
-    scplus_obj = dill.load(open(os.path.join(args.output, 'scenicplus/scplus_obj.pkl'), 'rb'))
-    adata = sc.read_h5ad(args.atac)  # key_to_group_by, need to match with cistopic_obj
-    celltypes = sorted(list(set(adata.obs[args.variable])))
+    # scplus_obj = dill.load(open(args.scenic, 'rb'))
+    scplus_obj = dill.load(open(os.path.join(args.output, 'scplus_obj_downstream.pkl'), 'rb'))
+
+    if args.celltypes is None:
+        celltypes = sorted(list(set(scplus_obj.metadata_cell['celltype'])))
+    else:
+        celltypes = sorted(args.celltypes)
+    print(f'Using Cell Types: {celltypes}')
 
     dmulti = DownScMulti(scplus_obj, args.output, celltypes=celltypes)
+    n_targets, rho, adj_pval, thresholds = dmulti.calculate()
+    dmulti.plot_correlation(rho, n_targets, adj_pval, thresholds)
+    dmulti.plot_heatmap()
+    dmulti.plot_erss(num_columns=2, top_n=10, figsize=(20, 30))
+    dmulti.plot_jaccard_heatmap()
+    dmulti.plot_dim_reduction()
+    dmulti.plot_eregulon()
 
-    try:
-        n_targets, rho, adj_pval, thresholds = dmulti.calculate()
-        dmulti.plot_correlation(rho, n_targets, adj_pval, thresholds)
-        dmulti.plot_heatmap()
-        dmulti.plot_rss(num_columns=2, top_n=10, figsize=(20, 30))
-        dmulti.plot_jaccard_heatmap()
-        dmulti.plot_dim_reduction()
-        dmulti.plot_eregulon()
-
+    if dmulti.selected_eRegulons is None:
+        selected_regulons = select_regulons(dmulti.scplus_obj)
+        target_regulons = [i.split('_')[0] for i in selected_regulons]
+    else:
         target_regulons = dmulti.selected_eRegulons
-        for celltype in celltypes:
-            dmulti.plot_network(celltype, target_regulons, n_top_features=1000, figsize=(20, 20))
-    except Exception as e:
-        raise (e)
-    finally:
-        dill.dump(dmulti.scplus_obj, open(os.path.join(args.output, 'scenicplus/scplus_obj_downstream.pkl'), 'wb'), protocol=-1)
+    for celltype in celltypes:
+        dmulti.plot_network(celltype, target_regulons, n_top_features=1000, figsize=(20, 20))
+    # except Exception as e:
+    #     raise (e)
+    # finally:
+    #     dill.dump(dmulti.scplus_obj, open(os.path.join(args.output, 'scplus_obj_downstream.pkl'), 'wb'), protocol=-1)
