@@ -95,7 +95,7 @@ class CustomDatabase:
         # subprocess.run('source /dellfsqd2/ST_OCEAN/USER/liyao1/tools/anaconda3/bin/deactivate', shell=True)
 
     def get_tfs(self, atac_fn, ortholog_groups_fn, ref_species='mm', ref_col: Union[str, int] = 'target_id',
-                target_col: Union[str, int] = 'gene_name', header: Optional[bool] = None, delimiter='\t', ref_tfs=None):
+                target_col: Union[str, int] = 'gene_name', header=None, delimiter='\t', ref_tfs=None):
         """
 
         :param atac_fn:
@@ -174,7 +174,7 @@ def create_custom_database(prefix, fasta, output_dir, consensus_regions_path, at
                          fasta=fasta,
                          output_dir=output_dir, bedtool_path=bed)
     cdb.extact_fasta(consensus_regions_path)
-    cdb.get_tfs(atac_fn, ortholog_groups_fn, ref_species=ref_species, ref_col=0, target_col=1, header=True)
+    cdb.get_tfs(atac_fn, ortholog_groups_fn, ref_species=ref_species, ref_col=0, target_col=1, header=None)
     cdb.make_motif_annotation(ref_species=ref_species, ref_col=0, target_col=1)
     cdb.create_feathers()
 
