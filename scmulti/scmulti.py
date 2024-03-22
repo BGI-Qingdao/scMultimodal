@@ -6,6 +6,7 @@
 
 import os
 import sys
+import stat
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -18,6 +19,7 @@ import numpy as np
 import pyranges as pr
 import pandas as pd
 from typing import Optional, Union, List
+import subprocess
 
 from pycisTopic.utils import (
     read_fragments_from_file,
@@ -29,7 +31,6 @@ from pycisTopic.pseudobulk_peak_calling import (
 )
 
 from pycisTopic.iterative_peak_calling import *
-from pycisTopic.cistopic_class import *
 from pycisTopic.cistopic_class import *
 from pycisTopic.lda_models import *
 from pycisTopic.clust_vis import *
@@ -56,10 +57,16 @@ class ScMulti:
                  gff_fn=None,
                  macs_path='macs2',
                  n_cpu=24,
-                 c_value=None):  # params_obj=None
+                 c_value=None,
+                 scores_db_fn=None,
+                 rankings_db_fn=None,
+                 custom_annotation_fn=None,
+                 motif_annotation_fn=None,
+                 tf_fn=None,
+                 ):  # params_obj=None
         # input exp data
-        self.rna_data = sc.read_h5ad(rna_fn)
-        self.atac_data = sc.read_h5ad(atac_fn)
+        self._rna_data = sc.read_h5ad(rna_fn)
+        self._atac_data = sc.read_h5ad(atac_fn)
 
         # species reference genome
         self.fasta = refgenome_obj.fasta_fn
@@ -104,22 +111,36 @@ class ScMulti:
         self.models = None
 
         # enrich
-        self.scores_db_fn = ''
-        self.rankings_db_fn = ''
-        self.custom_annotation_fn = ''
-        self.motif_annotation_fn = ''
-        self.tf_fn = ''
+        self.scores_db_fn = scores_db_fn
+        self.rankings_db_fn = rankings_db_fn
+        self.custom_annotation_fn = custom_annotation_fn
+        self.motif_annotation_fn = motif_annotation_fn
+        self.tf_fn = tf_fn
 
         # methods
         # self.create_atac_cell_data()
         # self.create_chromesize()
         # self.get_genome_size(c_value=c_value)
 
-    def create_atac_cell_data(self, celltype_name_seps: Optional[Union[str, List[str]]]):
+    @property
+    def rna_data(self):
+        return self._rna_data
+
+    @rna_data.setter
+    def rna_data(self, value):
+        self._rna_data = value
+
+    @property
+    def atac_data(self):
+        return self._atac_data
+
+    @atac_data.setter
+    def atac_data(self, value):
+        self._atac_data = value
+
+    def create_atac_cell_data(self):
         """
         Extract needed annotation information (cell types, barcodes, sample ids...) from ATAC data.
-        :param inplace:
-        :param celltype_name_seps: delimiter in cell type names. could be a string '-' or a list of str ['-','.']
         :return:
         """
         cell_data = self.atac_data.obs.copy()
@@ -127,19 +148,7 @@ class ScMulti:
         cell_data[self.atac_anno_label] = cell_data[self.atac_anno_label].astype(str)
         cell_data['celltype_label'] = cell_data[self.atac_anno_label]
         # Do not allow symbols other than _ exist in cell type name
-        cell_data[self.atac_anno_label].str.replace("[^A-Za-z0-9]+", "_", regex=True, inplace=True)
-        # if isinstance(celltype_name_seps, str):
-        #     celltype_name_seps = list(celltype_name_seps)
-        # if celltype_name_seps is None:
-        #     celltype_name_seps = ['\s+', '-']
-        # # special characters
-        # pattern = r'[!@#$%^&*.]'
-        # cell_data[self.atac_anno_label] = cell_data[self.atac_anno_label].str.replace(pattern, '_', regex=True)
-        # for sep in celltype_name_seps:
-        #     if sep not in pattern:
-        #         cell_data[self.atac_anno_label].replace(sep, '_', regex=True, inplace=True)
-        # # remove + in cell type name
-        # cell_data[self.atac_anno_label].replace('[+]', '', regex=True, inplace=True)
+        cell_data[self.atac_anno_label] = cell_data[self.atac_anno_label].str.replace("[^A-Za-z0-9]+", "_", regex=True)
 
         cell_data['barcode'] = list(cell_data.index)
         cell_data['barcode'] = cell_data['barcode'].astype(str)
@@ -256,7 +265,7 @@ class ScMulti:
         self.bw_paths = os.path.join(self.output_dir, 'pseudobulk_bed_files/bw_paths.pkl')
 
     def custom_call_peaks(self,
-                          convert_strand=False,
+                          convert_strand=True,
                           genome_size=None,
                           input_format='AUTO',
                           shift=73,
@@ -324,8 +333,6 @@ class ScMulti:
                 'Summit']
 
         # Get consensus peaks
-        print('self.chromsizes')
-        print(self.chromsizes)
         sys.stderr = open(os.devnull, "w")  # silence stderr
         consensus_peaks = get_consensus_peaks(narrow_peaks_dict, peak_half_width, chromsizes=self.chromsizes)
         sys.stderr = sys.__stderr__  # unsilence stderr
@@ -377,7 +384,7 @@ class ScMulti:
                    alpha_by_topic=True,
                    eta=0.1,
                    eta_by_topic=False,
-                   select_model=16,
+                   select_model=None,
                    return_model=True,
                    metrics=None,
                    plot_metrics=False
@@ -405,6 +412,10 @@ class ScMulti:
         # To find sets of co-accessible regions (topics), this will be used downstream as candidate enhancers
         # (together with Differentially Accessible Regions (DARs)).
         # To impute dropouts.
+        save_path = os.path.join(self.output_dir, 'atac/topics')
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+
         self.models = run_cgs_models(self.cistopic_obj,
                                      n_topics=n_topics,
                                      n_cpu=n_cpu,
@@ -414,14 +425,14 @@ class ScMulti:
                                      alpha_by_topic=alpha_by_topic,
                                      eta=eta,
                                      eta_by_topic=eta_by_topic,
-                                     save_path=self.output_dir)
+                                     save_path=save_path)
         if not os.path.exists(os.path.join(self.output_dir, 'atac/models')):
             os.makedirs(os.path.join(self.output_dir, 'atac/models'))
         pickle.dump(self.models,
                     open(os.path.join(self.output_dir, f'atac/models/{self.sample_id}_models_500_iter_LDA.pkl'), 'wb'))
 
         # ------------------------------------------------
-        # Analyze models
+        #                 Analyze models
         # ------------------------------------------------
         model = evaluate_models(self.models,
                                 select_model=select_model,
@@ -464,47 +475,10 @@ class ScMulti:
                 print(f'{metric} not found')
 
         combined_metric = sum(metrics_dict.values())
-        best_model_index = all_topics[combined_metric.tolist().index(max(combined_metric))]
-        best_model = self.models[all_topics.index(best_model_index)]
-        return best_model
-
-    def visualize_topics(self):
-        """
-
-        :return:
-        """
-        #
-        if not os.path.exists(os.path.join(self.output_dir, 'figs')):
-            os.makedirs(os.path.join(self.output_dir, 'figs'))
-        out_path = os.path.join(self.output_dir, 'figs')
-        # Visualization
-        run_umap(self.cistopic_obj, target='cell', scale=True)
-        plot_metadata(self.cistopic_obj, reduction_name='UMAP', variables=[self.variable],
-                      save=os.path.join(out_path, 'metadata1'))
-        plot_topic(self.cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(out_path, 'topic_plot1'))
-
-        # correct this kind of batch effects
-        # Harmony
-        harmony(self.cistopic_obj, 'sample_id', random_state=555)
-        # # UMAP
-        run_umap(self.cistopic_obj, reduction_name='harmony_UMAP',
-                 target='cell', harmony=True)
-        run_tsne(self.cistopic_obj, reduction_name='harmony_tSNE',
-                 target='cell', harmony=True)
-        # Plot again
-        run_umap(self.cistopic_obj, target='cell', scale=True)
-        plot_metadata(self.cistopic_obj, reduction_name='UMAP', variables=[self.variable],
-                      save=os.path.join(out_path, 'metadata'))
-        plot_topic(self.cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(out_path, 'topic_plot'))
-
-        cell_topic_heatmap(self.cistopic_obj,
-                           variables=[self.variable],
-                           scale=False,
-                           legend_loc_x=1.05,
-                           legend_loc_y=-1.2,
-                           legend_dist_y=-1,
-                           figsize=(10, 20),
-                           save=out_path + '/heatmap_topic_contr.pdf')
+        best_model_topic_num = all_topics[combined_metric.tolist().index(max(combined_metric))]
+        best_model_index = all_topics.index(best_model_topic_num)
+        best_model = self.models[best_model_index]
+        return best_model_index, best_model
 
     def candidate_enhancer_regions(self, split_pattern='-'):
         """
@@ -512,9 +486,9 @@ class ScMulti:
         :param split_pattern:
         :return:
         """
-        if not os.path.exists(os.path.join(self.output_dir, 'figs')):
-            os.makedirs(os.path.join(self.output_dir, 'figs'))
-        out_path = os.path.join(self.output_dir, 'figs')
+        if not os.path.exists(os.path.join(self.output_dir, 'figures')):
+            os.makedirs(os.path.join(self.output_dir, 'figures'))
+        out_path = os.path.join(self.output_dir, 'figures')
 
         region_bin_topics_otsu = binarize_topics(self.cistopic_obj, method='otsu', save=out_path + '/otsu.pdf')
         region_bin_topics_top3k = binarize_topics(self.cistopic_obj, method='ntop', ntop=3000,
@@ -577,7 +551,34 @@ class ScMulti:
 
         return region_sets
 
-    def make_custom_databases(self, db_path, prefix):
+    def write_bash(self, prefix, ortholog, ref_species, atac, script_file="run_custom_databases.sh"):
+        # check inputs
+        if script_file is None or prefix is None or ortholog is None or ref_species is None or atac is None:
+            print("Error: All variables must have a value.")
+            return
+
+        file_name = os.path.join(self.output_dir, script_file)
+        python_script = 'custom_databases.py'
+        python_args = f"--prefix {prefix} --fasta {self.fasta} --output {self.output_dir} --consensus_regions {self.path_to_regions[self.sample_id]} --ortholog {ortholog} --ref_species {ref_species} --atac {atac}"
+
+        with open(file_name, 'w') as file:
+            file.write("#!/bin/bash\n\n")
+            # Write the command to activate the conda en
+            file.write('source /dellfsqd2/ST_OCEAN/USER/liyao1/tools/anaconda3/bin/activate create_cistarget_databases\n\n')
+            # Write the Python script execution command
+            file.write(f"python {python_script} {python_args}\n\n")
+            # Write the command to deactivate the conda environment
+            file.write("conda deactivate\n")
+
+        # Make the script file executable
+        os.chmod(file_name, stat.S_IRWXU | stat.S_IRGRP | stat.S_IROTH)
+        return file_name
+
+    def create_custom_database(self, prefix, ortholog, ref_species, atac, script_file="run_custom_databases.sh"):
+        script_file = self.write_bash(prefix, ortholog, ref_species, atac, script_file=script_file)
+        subprocess.call(f'bash {script_file}', shell=True)
+
+    def parse_custom_databases_name(self, db_path, prefix):
         """
 
         :param db_path:
@@ -586,20 +587,27 @@ class ScMulti:
         """
         self.scores_db_fn = os.path.join(db_path, f'{prefix}.regions_vs_motifs.scores.feather')
         self.rankings_db_fn = os.path.join(db_path, f'{prefix}.regions_vs_motifs.rankings.feather')
-        self.custom_annotation_fn = os.path.join(db_path, f'{prefix}_custom_annotation.gtf')
         self.motif_annotation_fn = os.path.join(db_path, f'motifs-v10-nr.{prefix}-m0.001-o0.0.tbl')
         self.tf_fn = os.path.join(db_path, f'{prefix}_TFs.txt')
+
+    def parse_annotation_file_name(self):
+        cis_path = os.path.join(self.output_dir, 'cistarget_database')
+        if not os.path.exists(cis_path):
+            os.makedirs(os.path.join(cis_path))
+        self.custom_annotation_fn = os.path.join(cis_path, 'custom_annotation.gtf')
 
     def get_pr_annot(self):
         """
         with custom annot a pandas DataFrame containing the extra Transcription_Start_Site column
         :return:
         """
+        self.parse_annotation_file_name()
         custom_annotation = get_custom_annot(self.gff_fn, self.custom_annotation_fn)
         custom_annot = custom_annotation.copy()
         custom_annot['Strand'] = custom_annot['Strand'].replace('1', '+')  # TODO: is there a more robust way
         custom_annot['Strand'] = custom_annot['Strand'].replace('-1', '-')
         custom_annot['Transcription_Start_Site'] = custom_annot['Start']
+        custom_annot.to_csv(os.path.join(self.output_dir, 'scenicplus/custom_annot.csv'), index=False, sep='\t')
         pr_annot = pr.PyRanges(custom_annot)
         return pr_annot
 
@@ -614,7 +622,10 @@ class ScMulti:
             n_cpu = self.n_cpu
         if self.gff_fn is None:
             raise ValueError("GTF/GFF file not provided")
+        self.parse_annotation_file_name()
         custom_annotation = get_custom_annot(self.gff_fn, self.custom_annotation_fn)
+        print('---------------custom_annotation------------------')
+        print(custom_annotation)
 
         from scenicplus.wrappers.run_pycistarget import run_pycistarget
         if not os.path.exists(os.path.join(self.work_dir, 'motifs')):
@@ -629,9 +640,8 @@ class ScMulti:
             dem_db_path=self.scores_db_fn,
             path_to_motif_annotations=self.motif_annotation_fn,
             run_without_promoters=True,
-            n_cpu=n_cpu,
-            annotation_version="2024"
-        )
+            n_cpu=1,  # n_cpu,  2024-03-07
+        )  #annotation_version="2024"
 
     def network(self,
                 meta_cell_split=' ',
@@ -639,7 +649,7 @@ class ScMulti:
                 tf_file=None,
                 upstream=[1000, 150000],
                 downstream=[1000, 150000],
-                use_gene_boundaries=True,
+                use_gene_boundaries=False,
                 n_cpu=None):
         """
 
@@ -649,6 +659,7 @@ class ScMulti:
         :param upstream:
         :param downstream:
         :param use_gene_boundaries:
+        :param n_cpu:
         :return:
         """
         if n_cpu is None:
@@ -658,8 +669,8 @@ class ScMulti:
         _stderr = sys.stderr
         null = open(os.devnull, 'wb')
         # ensure selected model exists
-        if not self.cistopic_obj.selected_model:  # TODO: 为什么后面的步骤会改变这个数值
-            self.cistopic_obj.selected_model = self.auto_best_topic()
+        if not self.cistopic_obj.selected_model:
+            best_index, self.cistopic_obj.selected_model = self.auto_best_topic()
 
         menr = dill.load(open(os.path.join(self.output_dir, 'motifs/menr.pkl'), 'rb'))
 
@@ -685,6 +696,8 @@ class ScMulti:
 
         from scenicplus.enhancer_to_gene import get_search_space
         pr_annot = self.get_pr_annot()
+        print('---------------pr_annot------------------')
+        print(pr_annot)
 
         get_search_space(
             self.scplus_obj,
@@ -693,6 +706,9 @@ class ScMulti:
             upstream=upstream, downstream=downstream,
             use_gene_boundaries=use_gene_boundaries,
             biomart_host='http://sep2019.archive.ensembl.org/')
+        print('-------------------search_space------------------')
+        search_space = self.scplus_obj.uns['search_space']
+        print(search_space)
 
         from scenicplus.wrappers.run_scenicplus import run_scenicplus
         # run the wrapper like usual
@@ -722,6 +738,44 @@ class ScMulti:
             dill.dump(self.scplus_obj, open(os.path.join(self.output_dir, 'scenicplus/scplus_obj.pkl'), 'wb'),
                       protocol=-1)
 
+    def visualize_topics(self):
+        """
+
+        :return:
+        """
+        #
+        if not os.path.exists(os.path.join(self.output_dir, 'figures')):
+            os.makedirs(os.path.join(self.output_dir, 'figures'))
+        out_path = os.path.join(self.output_dir, 'figures')
+        # Visualization
+        run_umap(self.cistopic_obj, target='cell', scale=True)
+        plot_metadata(self.cistopic_obj, reduction_name='UMAP', variables=[self.variable],
+                      save=os.path.join(out_path, 'metadata1'))
+        plot_topic(self.cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(out_path, 'topic_plot1'))
+
+        # correct this kind of batch effects
+        # Harmony
+        harmony(self.cistopic_obj, 'sample_id', random_state=555)
+        # # UMAP
+        run_umap(self.cistopic_obj, reduction_name='harmony_UMAP',
+                 target='cell', harmony=True)
+        run_tsne(self.cistopic_obj, reduction_name='harmony_tSNE',
+                 target='cell', harmony=True)
+        # Plot again
+        run_umap(self.cistopic_obj, target='cell', scale=True)
+        plot_metadata(self.cistopic_obj, reduction_name='UMAP', variables=[self.variable],
+                      save=os.path.join(out_path, 'metadata'))
+        plot_topic(self.cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(out_path, 'topic_plot'))
+
+        cell_topic_heatmap(self.cistopic_obj,
+                           variables=[self.variable],
+                           scale=False,
+                           legend_loc_x=1.05,
+                           legend_loc_y=-1.2,
+                           legend_dist_y=-1,
+                           figsize=(10, 20),
+                           save=out_path + '/heatmap_topic_contr.pdf')
+
 
 def get_celltype_name(fn):
     """ Only suitable for bed files in this package"""
@@ -745,14 +799,15 @@ def read_narrowPeaks(narrowPeaks_path):
     return narrow_peaks_dict
 
 
-def add_strand(fn):  # TODO:
+def add_strand(fn, strand='+'):  # TODO:
     """
 
+    :param strand:
     :param fn:
     :return:
     """
     df = pd.read_csv(fn, compression='gzip', sep='\t', header=None)
-    df[5] = '+'
+    df[5] = strand
     df.to_csv(fn, index=False, compression='gzip', header=None, sep='\t')
 
 
@@ -770,3 +825,59 @@ def c_value_to_bp(c_value: float) -> int:
 def subset_list(target_list, index_list):
     X = list(map(target_list.__getitem__, index_list))
     return X
+
+
+def create_menr(path):
+    import dill
+    menr = {}
+
+    CTX_topics_otsu_All = dill.load(open(os.path.join(path, 'motifs/CTX_topics_otsu_All.pkl'), 'rb'))
+    DEM_topics_otsu_All = dill.load(open(os.path.join(path, 'motifs/DEM_topics_otsu_All.pkl'), 'rb'))
+    CTX_topics_top_3_All = dill.load(open(os.path.join(path, 'motifs/CTX_topics_top_3_All.pkl'), 'rb'))
+    DEM_topics_top_3_All = dill.load(open(os.path.join(path, 'motifs/DEM_topics_top_3_All.pkl'), 'rb'))
+
+    menr['CTX_topics_otsu_All'] = CTX_topics_otsu_All
+    menr['DEM_topics_otsu_All'] = DEM_topics_otsu_All
+    menr['CTX_topics_top_3_All'] = CTX_topics_top_3_All
+    menr['DEM_topics_top_3_All'] = DEM_topics_top_3_All
+
+    return menr
+
+
+# def match_key(scrna_data, scatac_data, scrna_key, scatac_key, group_key='celltype'):
+#     """
+#     For creating scenicplus object, ensure cell type column name is consistent between scrna data and cisobj
+#     :param scrna_data:
+#     :param scatac_data:
+#     :param scrna_key: cell type column name in scRNA data
+#     :param scatac_key: cell type column name in scATAC data
+#     :param group_key: cell type column name in cisobj data
+#     :return:
+#     """
+#     scrna_data.obs[group_key] = scrna_data.obs[scrna_key].copy()
+#     scatac_data.obs[group_key] = scatac_data.obs[scatac_key].copy()
+#
+#     scrna_data.obs[group_key] = scrna_data.obs[group_key].astype(str)
+#     scatac_data.obs[group_key] = scatac_data.obs[group_key].astype(str)
+#
+#     # Do not allow symbols other than _ exist in cell type name
+#     scrna_data.obs[group_key] = scrna_data.obs[group_key].str.replace("[^A-Za-z0-9]+", "_", regex=True)
+#     scatac_data.obs[group_key] = scatac_data.obs[group_key].str.replace("[^A-Za-z0-9]+", "_", regex=True)
+#
+#     return scrna_data, scatac_data
+
+
+def match_key(data, key, group_key='celltype', format_label=True):
+    """
+    For creating scenicplus object, ensure cell type column name is consistent between scrna data and cisobj
+    :param data:
+    :param key: cell type column name in scRNA data
+    :param group_key: cell type column name in cisobj data
+    :return:
+    """
+    data.obs[group_key] = data.obs[key].copy()
+    data.obs[group_key] = data.obs[group_key].astype(str)
+    if format_label:
+        # Do not allow symbols other than _ exist in cell type name
+        data.obs[group_key] = data.obs[group_key].str.replace("[^A-Za-z0-9]+", "_", regex=True)
+    return data
