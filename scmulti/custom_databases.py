@@ -94,8 +94,8 @@ class CustomDatabase:
         subprocess.call(cmd, shell=True)
         # subprocess.run('source /dellfsqd2/ST_OCEAN/USER/liyao1/tools/anaconda3/bin/deactivate', shell=True)
 
-    def get_tfs(self, atac_fn, ortholog_groups_fn, ref_species='mm', ref_col: Union[str, int] = 'target_id',
-                target_col: Union[str, int] = 'gene_name', header=None, delimiter='\t', ref_tfs=None):
+    def get_tfs(self, atac_fn, ortholog_groups_fn, ref_species='mm', target_col: Union[str, int] = 'target_id',
+                ref_col: Union[str, int] = 'gene_name', header=None, delimiter='\t', ref_tfs=None):
         """
 
         :param atac_fn:
@@ -120,21 +120,21 @@ class CustomDatabase:
         Agene_id_list = list(adata.var_names)
 
         hm = pd.read_csv(ortholog_groups_fn, delimiter=delimiter, header=header)
-        sub_hm = hm[hm[ref_col].isin(list(Agene_id_list))]
-        ah_anno = sub_hm[sub_hm[target_col] != '-']
-        ah_anno[[ref_col, target_col]].to_csv(f'{self.saving_dir}/{self.db_prefix}_{ref_species}_gene_name.txt',
+        sub_hm = hm[hm[target_col].isin(list(Agene_id_list))]
+        ah_anno = sub_hm[sub_hm[ref_col] != '-']
+        ah_anno[[target_col, ref_col]].to_csv(f'{self.saving_dir}/{self.db_prefix}_{ref_species}_gene_name.txt',
                                               index=False)  # TODO: is this necessary
 
         with open(ref_tfs, 'r') as f:
             reference_tfs = f.read().splitlines()
         homolog_tfs = list(
-            set(ah_anno[ah_anno[target_col].isin(reference_tfs)][ref_col]))  # TODO: better way to get TFs
+            set(ah_anno[ah_anno[ref_col].isin(reference_tfs)][target_col]))  # TODO: better way to get TFs
         self.tf_list = f'{self.db_prefix}_TFs.txt'
         with open(os.path.join(self.saving_dir, self.tf_list), 'w') as f:
             f.writelines('\n'.join(homolog_tfs))
 
-    def make_motif_annotation(self, ref_species='mm', ref_col: Union[str, int] = 'target_id',
-                              target_col: Union[str, int] = 'gene_name', ref_tbl_fn=None):
+    def make_motif_annotation(self, ref_species='mm', target_col: Union[str, int] = 'target_id',
+                              ref_col: Union[str, int] = 'gene_name', ref_tbl_fn=None):
         """
 
         :param ref_species:
@@ -156,14 +156,23 @@ class CustomDatabase:
         columns = ref_tbl_df.columns.values
 
         homolog = pd.read_csv(target_homolog_fn, dtype=str, na_values='')  # TODO: rely on homology genes...
-        homolog.columns = [ref_col, target_col]
-        homolog = homolog.dropna(axis='index')
+        # homolog.columns = [ref_col, target_col]
+        # homolog = homolog.dropna(axis='index')
+        # ref_tbl_df = ref_tbl_df.merge(homolog, how='left', left_on='gene_name', right_on=target_col)
+        # ref_tbl_df = ref_tbl_df.dropna(axis='index', subset=ref_col)
+        # ref_tbl_df = ref_tbl_df.drop(axis='columns', labels=target_col)
+        # ref_tbl_df = ref_tbl_df.rename(columns={ref_col: target_col})
+        # ref_tbl_df = ref_tbl_df[columns]
 
-        ref_tbl_df = ref_tbl_df.merge(homolog, how='left', left_on='gene_name', right_on=target_col)
-        ref_tbl_df = ref_tbl_df.dropna(axis='index', subset=ref_col)
-        ref_tbl_df = ref_tbl_df.drop(axis='columns', labels=target_col)
-        ref_tbl_df = ref_tbl_df.rename(columns={ref_col: target_col})
-        ref_tbl_df = ref_tbl_df[columns]
+        # 2024-04-25
+        homolog.columns = [target_col, ref_col]
+        homolog = homolog.dropna(axis='index')
+        df = ref_tbl_df.merge(homolog, how='left', on=ref_col)
+        df = df.dropna(axis='index', subset=target_col)
+        df = df.drop(axis='columns', labels=ref_col)
+        df = df.rename(columns={target_col: ref_col})
+        ref_tbl_df = df[columns]
+
         self.motif_anno = f'motifs-v10-nr.{self.db_prefix}-m0.001-o0.0.tbl'
         ref_tbl_df.to_csv(os.path.join(self.saving_dir, self.motif_anno), sep='\t', index=False)
 
