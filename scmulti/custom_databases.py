@@ -167,11 +167,13 @@ class CustomDatabase:
         # 2024-04-25
         homolog.columns = [target_col, ref_col]
         homolog = homolog.dropna(axis='index')
-        df = ref_tbl_df.merge(homolog, how='left', on=ref_col)
+        # merge based on hm/mm gene names
+        df = ref_tbl_df.merge(homolog, how='left', left_on='gene_name', right_on=ref_col)
         df = df.dropna(axis='index', subset=target_col)
-        df = df.drop(axis='columns', labels=ref_col)
-        df = df.rename(columns={target_col: ref_col})
+        df = df.drop(axis='columns', labels='gene_name')
+        df = df.rename(columns={target_col: 'gene_name'})
         ref_tbl_df = df[columns]
+        print(ref_tbl_df['gene_name'])
 
         self.motif_anno = f'motifs-v10-nr.{self.db_prefix}-m0.001-o0.0.tbl'
         ref_tbl_df.to_csv(os.path.join(self.saving_dir, self.motif_anno), sep='\t', index=False)
@@ -183,8 +185,8 @@ def create_custom_database(prefix, fasta, output_dir, consensus_regions_path, at
                          fasta=fasta,
                          output_dir=output_dir, bedtool_path=bed)
     cdb.extact_fasta(consensus_regions_path)
-    cdb.get_tfs(atac_fn, ortholog_groups_fn, ref_species=ref_species, ref_col=0, target_col=1, header=None)
-    cdb.make_motif_annotation(ref_species=ref_species, ref_col=0, target_col=1)
+    cdb.get_tfs(atac_fn, ortholog_groups_fn, ref_species=ref_species, ref_col=1, target_col=0, header=None)
+    cdb.make_motif_annotation(ref_species=ref_species, ref_col=1, target_col=0)
     cdb.create_feathers()
 
 
