@@ -1,7 +1,8 @@
-# Title     : TODO
-# Objective : TODO
-# Created by: Oreo
+# Title     : label transfer
+# Objective : Transfer cell type labels from scRNA data to scATAC data
+# Created by: Yao Li
 # Created on: 2024-03-04
+# Identifying anchors between scRNA-seq and scATAC-seq datasets to Transfer Label
 
 library(Seurat)
 library(Signac)
@@ -24,6 +25,8 @@ parser$add_argument("-o", "--output", help = "output directory")
 # Parse the command-line arguments
 args <- parser$parse_args()
 
+
+# -------- 0. Load in data
 # Load scATAC data
 print('Loading scATAC data...')
 data.atac <- readRDS(args$atac)
@@ -36,33 +39,85 @@ print(str(data.rna))
 print(colnames(data.rna@meta.data))
 print(head(data.rna@meta.data[[args$celltype]]))
 
-# Identifying anchors between scRNA-seq and scATAC-seq datasets
-# transfer label
-# quantify gene activity
+# -------- 1. Quantify gene activity
 print('Calculating Gene Activity...')
-gene.activities <- GeneActivity(data.atac, features = VariableFeatures(data.rna))
+# 2024-06-03
+# sample_ids <- c('DP8480004854TR_L01_16','DP8480004853TR_L01_16','DP8480004854TR_L01_1','DP8480004853TR_L01_1')
+# feature_names <- list()
+# for (sid in sample_ids){
+#   subdata <- subset(data.atac, subset=sample==sid)
+#   gene.activities <- GeneActivity(subdata, features = VariableFeatures(data.rna))  # only consider HVGs according to scRNA data
+#   print(paste0(sid, ': ',length(rownames(gene.activities))))
+#   feature_names <- c(feature_names, rownames(gene.activities))  #feature_names <- c(feature_names, rownames(gene.activities))
+# }
+# shared_feature_names <- Reduce(intersect,feature_names)
+# feature_rna <- VariableFeatures(data.rna)
+# used_feature_names <- Reduce(intersect, list(shared_feature_names,feature_rna))
+# print(paste0('Number of used features: ',length(shared_feature_names)))
+# gene.activities <- GeneActivity(data.atac, features = shared_feature_names)
+# Done, 2024-06-03
+
+sample_ids <- c('DP8480004854TR_L01_16','DP8480004853TR_L01_16','DP8480004854TR_L01_1','DP8480004853TR_L01_1')
+feature_names <- list()
+for (sidx in 1:length(sample_ids)){
+  sid <- sample_ids[[sidx]]
+  subdata <- subset(data.atac, subset=sample==sid)
+  gene.activities <- GeneActivity(subdata, features = VariableFeatures(data.rna))  # only consider HVGs according to scRNA data
+  print(paste0(sid, ': ',length(rownames(gene.activities))))
+  feature_names[[length(feature_names)+1]] <- rownames(gene.activities)  # append list into a list
+}
+print(length(feature_names))
+shared_feature_names <- Reduce(intersect,feature_names)
+print(paste0('Number of used features: ',length(shared_feature_names)))
+# stop()
+# subdata1 <- subset(data.atac, subset=sample=='DP8480004853TR_L01_16')
+# ga1 <- GeneActivity(subdata1, features = VariableFeatures(data.rna))
+# gn1 <- rownames(ga1)
+# subdata2 <- subset(data.atac, subset=sample=='DP8480004854TR_L01_16')
+# ga2 <- GeneActivity(subdata2, features = VariableFeatures(data.rna))
+# gn2 <- rownames(ga2)
+# subdata3 <- subset(data.atac, subset=sample=='DP8480004853TR_L01_1')
+# ga3 <- GeneActivity(subdata3, features = VariableFeatures(data.rna))
+# gn3 <- rownames(ga3)
+# subdata4 <- subset(data.atac, subset=sample=='DP8480004854TR_L01_1')
+# ga4 <- GeneActivity(subdata4, features = VariableFeatures(data.rna))
+# gn4 <- rownames(ga4)
+# shared_feature_names <- Reduce(intersect,list(gn1,gn2,gn3,gn4))
+gene.activities <- GeneActivity(data.atac, features = shared_feature_names)
+
+# gene.activities <- GeneActivity(data.atac, features = VariableFeatures(data.rna))
 print('Gene Activity Done')
 
-# add gene activities as a new assay
+# -------- 2. Add gene activities as a new assay
 data.atac[["ACTIVITY"]] <- CreateAssayObject(counts = gene.activities)
 
-# normalize gene activities
+# -------- 3. Filter out cells with low ATAC counts
+# data.atac <- subset(data.atac, subset = nCount_ATAC > 500)  # set number
+
+# -------- 3. Normalize gene activities
 DefaultAssay(data.atac) <- "ACTIVITY"
 print('Normalizing and Scaling data...')
 data.atac <- NormalizeData(data.atac)
+# 2024-06-03
+# data.atac <- readRDS('/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/scripts/scmulti/data.atac.small.rds')
 data.atac <- ScaleData(data.atac, features = rownames(data.atac))
+# data.atac <- ScaleData(data.atac, features = VariableFeatures(data.rna))
+# saveRDS(data.atac, '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/scripts/scmulti/data.atac.small_scaled.rds')
+gc()
 
-# Identify anchors
+# -------- 4. Identify anchors
 print('Finding Transfer Anchors...')
 transfer.anchors <- FindTransferAnchors(reference = data.rna,
                                         query = data.atac,
-                                        features = VariableFeatures(object = data.rna),
+                                        features = rownames(data.atac),  #VariableFeatures(object = data.rna),
                                         reference.assay = "RNA",
                                         query.assay = "ACTIVITY",
-                                        reduction = "cca")
+                                        reduction = "rpca")  # 2024-06-04, cca
 print('-----Finished finding transfer anchors-----')
+saveRDS(transfer.anchors, '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/scripts/scmulti/transfer.anchors.rds')
+gc()
 
-# Annotate scATAC-seq cells via label transfer
+# -------- 5. Annotate scATAC-seq cells via label transfer
 print('Transfering data...')
 celltype.predictions <- TransferData(anchorset = transfer.anchors,
                                      refdata = data.rna@meta.data[[args$celltype]],
@@ -75,6 +130,7 @@ saveRDS(data.atac, file.path(args$output, paste0(args$name, '.merged.atac.rds'))
 print('-----Saved results to disk-----')
 
 
+# -------- 6. Visualization
 plot_annotation <- function(merged.atac, data.rna, celltype_label){
   p1 <- DimPlot(merged.atac, reduction = 'integrated_lsi', group.by = "predicted.id", label = TRUE) + NoLegend() + ggtitle("Predicted annotation")
   p2 <- DimPlot(data.rna, group.by = celltype_label, label = TRUE) + NoLegend() + ggtitle("Ground-truth annotation")
