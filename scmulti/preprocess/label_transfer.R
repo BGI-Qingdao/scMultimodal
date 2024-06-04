@@ -22,6 +22,7 @@ parser$add_argument("--gene_name_col", help = "gene name columns in to GFF/GTF g
 parser$add_argument("--name", help = "Project name")
 parser$add_argument("--celltype", default='celltype', help = "cell type label in meta.data")
 parser$add_argument("-o", "--output", help = "output directory")
+parser$add_argument("--list", required = FALSE, help = "library id list text file")
 # Parse the command-line arguments
 args <- parser$parse_args()
 
@@ -41,22 +42,25 @@ print(head(data.rna@meta.data[[args$celltype]]))
 
 # -------- 1. Quantify gene activity
 print('Calculating Gene Activity...')
-# 2024-06-03
-# sample_ids <- c('DP8480004854TR_L01_16','DP8480004853TR_L01_16','DP8480004854TR_L01_1','DP8480004853TR_L01_1')
-# feature_names <- list()
-# for (sid in sample_ids){
-#   subdata <- subset(data.atac, subset=sample==sid)
-#   gene.activities <- GeneActivity(subdata, features = VariableFeatures(data.rna))  # only consider HVGs according to scRNA data
-#   print(paste0(sid, ': ',length(rownames(gene.activities))))
-#   feature_names <- c(feature_names, rownames(gene.activities))  #feature_names <- c(feature_names, rownames(gene.activities))
-# }
-# shared_feature_names <- Reduce(intersect,feature_names)
-# feature_rna <- VariableFeatures(data.rna)
-# used_feature_names <- Reduce(intersect, list(shared_feature_names,feature_rna))
-# print(paste0('Number of used features: ',length(shared_feature_names)))
-# gene.activities <- GeneActivity(data.atac, features = shared_feature_names)
-# Done, 2024-06-03
-
+GeneActivity2 <- function(sample_ids, data.atac){
+  feature_names <- list()
+  for (sidx in 1:length(sample_ids)){
+    sid <- sample_ids[[sidx]]
+    subdata <- subset(data.atac, subset=sample==sid)
+    gene.activities <- GeneActivity(subdata, features = VariableFeatures(data.rna))  # only consider HVGs according to scRNA data
+    print(paste0(sid, ': ',length(rownames(gene.activities))))
+    feature_names[[length(feature_names)+1]] <- rownames(gene.activities)  # append list into a list
+  }
+  print(length(feature_names))
+  shared_feature_names <- Reduce(intersect,feature_names)
+  print(paste0('Number of used features: ',length(shared_feature_names)))
+  return(shared_feature_names)
+}
+getSampleID <- function(file_name){
+  df <- read.table(file = file_name, header = F, stringsAsFactors = F)
+  job_list <- as.vector(t(df$V1))
+  return(job_list)
+}
 sample_ids <- c('DP8480004854TR_L01_16','DP8480004853TR_L01_16','DP8480004854TR_L01_1','DP8480004853TR_L01_1')
 feature_names <- list()
 for (sidx in 1:length(sample_ids)){
@@ -69,22 +73,7 @@ for (sidx in 1:length(sample_ids)){
 print(length(feature_names))
 shared_feature_names <- Reduce(intersect,feature_names)
 print(paste0('Number of used features: ',length(shared_feature_names)))
-# stop()
-# subdata1 <- subset(data.atac, subset=sample=='DP8480004853TR_L01_16')
-# ga1 <- GeneActivity(subdata1, features = VariableFeatures(data.rna))
-# gn1 <- rownames(ga1)
-# subdata2 <- subset(data.atac, subset=sample=='DP8480004854TR_L01_16')
-# ga2 <- GeneActivity(subdata2, features = VariableFeatures(data.rna))
-# gn2 <- rownames(ga2)
-# subdata3 <- subset(data.atac, subset=sample=='DP8480004853TR_L01_1')
-# ga3 <- GeneActivity(subdata3, features = VariableFeatures(data.rna))
-# gn3 <- rownames(ga3)
-# subdata4 <- subset(data.atac, subset=sample=='DP8480004854TR_L01_1')
-# ga4 <- GeneActivity(subdata4, features = VariableFeatures(data.rna))
-# gn4 <- rownames(ga4)
-# shared_feature_names <- Reduce(intersect,list(gn1,gn2,gn3,gn4))
 gene.activities <- GeneActivity(data.atac, features = shared_feature_names)
-
 # gene.activities <- GeneActivity(data.atac, features = VariableFeatures(data.rna))
 print('Gene Activity Done')
 
