@@ -27,6 +27,10 @@ parser$add_argument("--list", required = FALSE, help = "library id list text fil
 args <- parser$parse_args()
 
 
+# 2024-06-11
+options(future.globals.maxSize = 10000 * 1024^2)
+
+
 # -------- 0. Load in data
 # Load scATAC data
 print('Loading scATAC data...')
@@ -36,9 +40,7 @@ print(data.atac)
 print('Loading scRNA data...')
 scrna_fn <- args$rna
 data.rna <- readRDS(scrna_fn)
-print(str(data.rna))
-print(colnames(data.rna@meta.data))
-print(head(data.rna@meta.data[[args$celltype]]))
+proj_name <- args$name
 
 # -------- 1. Quantify gene activity
 print('Calculating Gene Activity...')
@@ -61,7 +63,9 @@ getSampleID <- function(file_name){
   job_list <- as.vector(t(df$V1))
   return(job_list)
 }
-sample_ids <- c('DP8480004854TR_L01_16','DP8480004853TR_L01_16','DP8480004854TR_L01_1','DP8480004853TR_L01_1')
+# sample_ids <- c('DP8480004854TR_L01_16','DP8480004853TR_L01_16','DP8480004854TR_L01_1','DP8480004853TR_L01_1')
+sample_ids <- getSampleID(args$list)
+print(sample_ids)
 feature_names <- list()
 for (sidx in 1:length(sample_ids)){
   sid <- sample_ids[[sidx]]
@@ -86,12 +90,17 @@ data.atac[["ACTIVITY"]] <- CreateAssayObject(counts = gene.activities)
 # -------- 3. Normalize gene activities
 DefaultAssay(data.atac) <- "ACTIVITY"
 print('Normalizing and Scaling data...')
+gc()
 data.atac <- NormalizeData(data.atac)
 # 2024-06-03
 # data.atac <- readRDS('/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/scripts/scmulti/data.atac.small.rds')
-data.atac <- ScaleData(data.atac, features = rownames(data.atac))
-# data.atac <- ScaleData(data.atac, features = VariableFeatures(data.rna))
-# saveRDS(data.atac, '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/scripts/scmulti/data.atac.small_scaled.rds')
+# data.atac <- ScaleData(data.atac, features = rownames(data.atac))
+print(data.atac)
+print(paste0('row numbers of data.atac', length(rownames(data.atac))))
+data.atac <- ScaleData(data.atac, features = VariableFeatures(data.rna))
+# 2024-06-11
+data.atac <- ScaleData(data.atac, features = VariableFeatures(data.rna), do.scale = FALSE)
+saveRDS(data.atac, file.path(args$output, paste0(args$name, '.atac.small_scaled.rds')))
 gc()
 
 # -------- 4. Identify anchors
@@ -101,9 +110,11 @@ transfer.anchors <- FindTransferAnchors(reference = data.rna,
                                         features = rownames(data.atac),  #VariableFeatures(object = data.rna),
                                         reference.assay = "RNA",
                                         query.assay = "ACTIVITY",
-                                        reduction = "rpca")  # 2024-06-04, cca
+                                        reduction = "rpca",  # 2024-06-04, cca
+                                        k.filter = NA)  # 2024-06-12: 阻止 small num of anchors then got filtered out
+                                        # 2024-06-12: suggest to use the ref dim
 print('-----Finished finding transfer anchors-----')
-saveRDS(transfer.anchors, '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/scripts/scmulti/transfer.anchors.rds')
+saveRDS(transfer.anchors, file.path(args$output, paste0(args$name, '.transfer.anchors.rds')))
 gc()
 
 # -------- 5. Annotate scATAC-seq cells via label transfer
@@ -111,7 +122,7 @@ print('Transfering data...')
 celltype.predictions <- TransferData(anchorset = transfer.anchors,
                                      refdata = data.rna@meta.data[[args$celltype]],
                                      weight.reduction = data.atac[["integrated_lsi"]],
-                                     dims = 2:30)
+                                     dims = 2:30)  # 2024-06-12: suggest to use the query dim
 print('-----Finished transferring data-----')
 data.atac <- AddMetaData(data.atac, metadata = celltype.predictions)
 
