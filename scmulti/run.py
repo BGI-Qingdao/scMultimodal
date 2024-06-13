@@ -126,14 +126,14 @@ def main():
 
     if not os.path.exists(args.output):
         os.makedirs(args.output)
-    # # 0.
+    # 0.
     # scparams = ScMultiParams(work_dir=args.output, output_dir=args.output)
     # # 1. Reference Genome
     # refgenome = RefGenome(work_dir=args.output, output_dir=args.output, fasta_fn=args.fasta,
     #                       chromsize_fn=args.chromsize)
     # refgenome.get_chromsize()
-    ## # 2. Integration
-    #proj = ScMulti(refgenome,
+    # # 2. Integration
+    # proj = ScMulti(refgenome,
     #               args.rna,
     #               args.fragment,
     #               scparams,
@@ -151,18 +151,21 @@ def main():
     #     tf_file = os.path.join(args.output, 'all_genes.txt')
     # else:
     #     tf_file = args.tf
+    tf_file = args.tf
     # tf_file = os.path.join(args.output, 'all_genes.txt')
-    tf_file = '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/OM_TFs.txt'
+    # tf_file = '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/OM_TFs.txt'
     proj = pickle.load(open(os.path.join(args.output, 'proj.pkl'), 'rb'))
-    print(proj.cistopic_obj)
+    # print(proj.cistopic_obj)
     rna = sc.read_h5ad(args.rna)
     atac = sc.read_h5ad(args.atac)
     new_rna = match_key(rna, key=args.rna_key)
-    new_atac = match_key(atac, key=args.atac_key)
+    # new_atac = match_key(atac, key=args.atac_key)
+    # new_atac.obs['celltype'] = 'OM_'+new_atac.obs['celltype']
+    new_rna.obs['celltype'] = new_rna.obs['celltype'].str.replace('OM_','')
     proj.rna_data = new_rna
-    proj.atac_data = new_atac
+    # proj.atac_data = new_atac
     print(proj.rna_data.obs['celltype'].head())
-    print(proj.atac_data.obs['celltype'].head())
+    # print(proj.atac_data.obs['celltype'].head())
     try:
         # proj.create_atac_cell_data()  # celltype_name_seps=args.celltype_name_seps
         # proj.create_chromesize()
@@ -183,12 +186,10 @@ def main():
         #    narrow_peaks_paths=narrow_peaks_paths,
         #    peak_half_width=args.peak_half_width)
         # proj.create_cistopic_obj()
-        # print(proj.cistopic_obj)
         # cistopic_obj = pickle.load(open(
         #     '/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/03.networks/liver/atac/cistopic_obj_models.pkl',
         #     'rb'))
         # proj.cistopic_obj = cistopic_obj
-        # print(args.n_topics)
         # print(args.n_iter, args.random_state, args.alpha, args.alpha_by_topic, args.eta, args.eta_by_topic, args.select_model,args.return_model,args.metrics,args.plot_metrics)
         # proj.get_topics(n_topics=args.n_topics,
         #                n_iter=args.n_iter,
@@ -212,21 +213,26 @@ def main():
         # proj.cistopic_obj.add_LDA_model(model)
         # proj.cistopic_obj.add_cell_data(proj.cell_data)
         # pickle.dump(proj.cistopic_obj, open(os.path.join(proj.output_dir, 'atac/cistopic_obj_models.pkl'), 'wb'))
-        # # ensure selected model exists
+        # ensure selected model exists
         # if not proj.cistopic_obj.selected_model:
         #     best_index, proj.cistopic_obj.selected_model = proj.auto_best_topic()
-        # #proj.visualize_topics()
+        # proj.visualize_topics()
         # proj.candidate_enhancer_regions()
         # if args.make_custom_database:
         #    proj.create_custom_database(args.prefix, args.ortholog, ref_species=args.ref_species, atac=args.atac)
         # else:
-        print(f'-----------------------------------------------args.make_custom_database  {args.make_custom_database}')
-        proj.parse_custom_databases_name(db_path=os.path.join(args.output, 'cistarget_database'), prefix=args.prefix)
-        proj.parse_annotation_file_name()
-        # proj.cistopic_obj = cistopic_obj
+        #     print(f'-----------------------------------------------args.make_custom_database  {args.make_custom_database}')
+        #     proj.parse_custom_databases_name(db_path=os.path.join(args.output, 'cistarget_database'), prefix=args.prefix)
+        # proj.parse_annotation_file_name()
+        cistopic_obj = pickle.load(open(os.path.join(proj.output_dir, 'atac/cistopic_obj_models.pkl'),'rb'))
+        proj.cistopic_obj = cistopic_obj
         proj.enrichment(chrom_header=args.chrom_header)
-        # proj.network(tf_file=tf_file, upstream=args.upstream,
-        #              downstream=args.downstream, use_gene_boundaries=args.use_gene_boundaries)
+        proj.network(tf_file=tf_file, upstream=args.upstream,
+                     downstream=args.downstream, use_gene_boundaries=args.use_gene_boundaries)
+
+        # model = pickle.load(open('/dellfsqd2/ST_OCEAN/USER/liyao1/11.evo_fish/exp/03.Oryzias_melastigma/03.networks/intestine/atac/models/intestine_models_500_iter_LDA.pkl','rb'))
+        # proj.models = model
+        # print(proj.cistopic_obj)
         proj.network(tf_file=tf_file)
     except Exception as e:
         raise (e)
