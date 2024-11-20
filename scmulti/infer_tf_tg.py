@@ -7,108 +7,135 @@
 import os
 import sys
 import time
+from dataclasses import dataclass
 
-import gzip
 import pickle
 import argparse
-import textwrap
 import numpy as np
 import pandas as pd
 import scanpy as sc
 from hmmlearn import hmm
 
 
-class fTRM:
-    """Fish Transcriptional regulatory module (TRM)
-    A TRM contains TF, motifs and target genes."""
-
-    def __init__(self):
-        pass
-
-
+# Load & extracting sequencing data
 def read_fragments(fn):
     df = pd.read_csv(fn, compression='gzip', header=None, sep='\t', quotechar='"')
     df.columns = ['chrom', 'start', 'end', 'cell', 'count']
     return df
 
 
-def get_region_reads(fragments: pd.DataFrame, chrom: str, start, end):
+def get_region_reads(fragments: pd.DataFrame, chrom: str, start: int, end: int):
     sub_df = fragments[fragments.chrom == chrom]
     regions_reads = sub_df[sub_df.start >= start]
     regions_reads = regions_reads[regions_reads.end <= end]
     return regions_reads
 
 
-def train_sequences(regions_reads, ref_genome, chrom):
-    seqs = []
-    for index, row in regions_reads.iterrows():
-        seq = ref_genome[chrom][row.start - 1:row.end]
-        seqs.append(seq)
-    return seqs
+# -------------------------------------------------------
+# DATA:
+# -------------------------------------------------------
+class fRegion:
+    def __init__(self, region_id: str):
+        self.region_id = region_id
+        self.chrom, self.start, self.end = get_region_info(region_id)
+        self.seq = ''
+
+    def get_seq(self, genome: dict):
+        """Extract region sequences when needed."""
+        self.seq = genome[self.chrom][self.start - 1:self.end]  # TODO: starts from 1?
+        return self.seq
+
+    def __repr__(self):
+        return f"fRegion: {self.region_id}"
 
 
-def get_regions_meta(scplus_obj: sc.AnnData):
-    """Extract TF and its corresponding regions (containing motif sequence) info"""
-    meta = scplus_obj.uns['eRegulon_metadata'][['TF', 'Region', 'Gene', 'R2G_importance']].drop_duplicates(inplace=True)
-    return meta
+class fTRM:
+    """Fish Transcriptional regulatory module (TRM)
+        A TRM contains TF, regions and target genes on a single chromosome."""
+
+    def __init__(self, tf, region_id, targets=None, celltype=None, species=None):
+        if targets is None:
+            targets = []
+        self.tf = tf  # tf name
+        self.region = fRegion(region_id)  # a region id, only one
+        self.chrom = self.region.chrom
+        self.targets = targets
+        # optional
+        self.celltype = celltype
+        self.species = species
+
+    def __repr__(self):
+        return f"fTRM(TF: {self.tf}, {self.region}, Targets: {self.targets})"
 
 
-def get_seq(region_id, ref_genome):
-    chrom, pos = region_id.split(':')
-    start, end = pos.split('-')
-    seq = ref_genome[chrom][int(start) - 1:int(end)]  # TODO: starts from 1?
-    return chrom, seq
+class fRegulons:
+    """
+    A list of fTRMs
+    """
+
+    def __init__(self):
+        self.regulons = {}  # Dictionary to store lists of items
+
+    def add_trm(self, trm):
+        """
+        Add an Item to the dictionary.
+        If the name already exists, append the item to the list for that name.
+        """
+        if not isinstance(trm, fTRM):
+            raise ValueError("Only instances of the Item class can be added.")
+        if trm.tf not in self.regulons:
+            self.regulons[trm.tf] = []
+        self.regulons[trm.tf].append(trm)
+
+    def remove_trm(self, tf_name, region: fRegion = None):
+        """
+        Remove items by name.
+        If a value is provided, remove only the items with that specific value.
+        """
+        if tf_name in self.regulons:
+            if region is None:
+                del self.regulons[tf_name]  # Remove all items with this name
+            else:
+                self.regulons[tf_name] = [
+                    trm for trm in self.regulons[tf_name] if trm.region != region
+                ]
+                if not self.regulons[tf_name]:  # Remove the key if the list is empty
+                    del self.regulons[tf_name]
+
+    def __repr__(self):
+        return f"ItemList({self.regulons})"
+
+    def __getitem__(self, tf_name):
+        return self.regulons.get(tf_name, [])  # Return the list of items or an empty list
+
+    def __setitem__(self, tf_name, items):
+        if not all(isinstance(trm, fTRM) for trm in items):
+            raise ValueError("Value must be a list of Item instances.")
+        self.regulons[tf_name] = items
+
+    def __delitem__(self, tf_name):
+        del self.regulons[tf_name]
+
+    def __len__(self):
+        return len(self.regulons)  # Number of unique keys
+
+    def __contains__(self, tf_name):
+        return tf_name in self.regulons
+
+    def keys(self):
+        """Return all keys (names of items)."""
+        return self.regulons.keys()
+
+    def values(self):
+        """Return all values (lists of items)."""
+        return self.regulons.values()
+
+    def items(self):
+        """Return all key-value pairs as (name, list of items)."""
+        return self.regulons.items()
 
 
-def train4tf(tf_meta, ref_genome):
-    """Train a HMM for one TF on each chromosome"""
-    regions = list(set(tf_meta.Region))
-    known_regions = [get_seq(region, ref_genome) for region in regions]
-    train_sequences = [encode_sequence(seq) for seq in known_regions]
-    # Train HMM
-    n_states = 5  # Choose a suitable number of states
-    model = hmm.MultinomialHMM(n_components=n_states, n_iter=100, random_state=42)
-
-    chrome_seq = ref_genome[chrom]
-    chrome_seq = genome[chrom][int(start) - 1000:int(end) + 1000]
-    encoded_chr¢®ƒ√om = encode_sequence(chrome_seq)
-    window_size = 500  # Length of binding region
-    step = 1
-
-    print(f'Scaning chromosome {chrom}...')
-    start_time = time.time()
-    scores = []
-    for i in range(0, len(encoded_chrom) - window_size + 1, step):
-        window = encoded_chrom[i:i + window_size]
-        window_counts = sequence_to_counts(window)
-        score = model.score(window_counts)
-        scores.append((i, i + window_size, score))
-    end_time = time.time()
-    print(f'Done, used {round(end_time - start_time, 2)} seconds.')
-
-    # Filter and output potential binding sites
-    threshold = -800  # Adjust threshold based on your data
-    predicted_sites = [(start, end) for start, end, score in scores if score > threshold]
-    print("Predicted binding sites:", predicted_sites)
-
-    # Or top 1%
-    scores_array = np.array([score for _, _, score in scores])
-    dynamic_threshold = np.percentile(scores_array, 99)  # Top 1% scores
-    predicted_sites = [(start, end) for start, end, score in scores if score > dynamic_threshold]
-    # predicted_sites: not right?
-
-
-def create_parser():
-    parser = argparse.ArgumentParser(
-        prog='scmulti_hmm',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        add_help=True,
-    )
-    parser.add_argument('-o', '--output', help='output directory to save all the intermediate and final results.')
-    parser.add_argument('-i', '--input', help='scenic+ results')
-    return parser
-
-
+# Load in reference genome
 def read_fasta(fasta_file):
     """
     Read fa/fasta file
@@ -136,14 +163,109 @@ def read_fasta(fasta_file):
     return sequences
 
 
-def encode_sequence(seq):
+# Load eRegulon results
+def get_regulon_meta(scplus_fn: str) -> pd.DataFrame:
+    """
+    Extract eRegulon metadata from Scenic+ output (pickle file)
+    (TF and its corresponding regions (containing motif sequence) info)
+    :param scplus_fn:
+    :return:
+    """
+    scplus_obj = pickle.load(open(scplus_fn, 'rb'))
+    meta_data = scplus_obj.uns['eRegulon_metadata'][['TF', 'Region', 'Gene', 'R2G_importance']].drop_duplicates(
+        inplace=True)
+    meta_data['Chromosome'] = meta_data.Region.str.split(':', expand=True)[0]
+    return meta_data
+
+
+def read_regulon_meta(fn):
+    """Read eRegulon metadata csv file"""
+    meta_data = pd.read_csv(fn, sep='\t')
+    meta_data = meta_data[['TF', 'Region', 'Gene', 'R2G_importance']].drop_duplicates(inplace=False)
+    meta_data['Chromosome'] = meta_data.Region.str.split(':', expand=True)[0]
+    return meta_data
+
+
+def get_region_info(region_id: str):
+    """
+    Extract region information from region id in Scenic+ eRegulon metadata
+    :param region_id:
+    :return: chromosome id, region start position, region end position
+    """
+    chrom, pos = region_id.split(':')
+    start, end = pos.split('-')
+    return chrom, int(start), int(end)
+
+
+def handle_eRegulons_meta(eRegulons_meta: pd.DataFrame) -> fRegulons:
+    """
+    For each TF-region-target, create a fTRM object
+    :param eRegulons_meta:
+    :return: rRegulons object, aka a dictionary of fTRMs, key is TF name, value is a list of fTRMs with the same TF name
+    """
+    regulons = fRegulons()
+    TFs = list(set(eRegulons_meta.TF))
+    for tf in TFs:
+        tf_df = eRegulons_meta[eRegulons_meta.TF == tf]
+        # for each chromosome:
+        chroms = list(set(tf_df.Chromosome))
+        for chrom in chroms:
+            sub_df = tf_df[tf_df.Chromosome == chrom]
+            # on the same chromosome, for each region (TF binding region, containing motifs)
+            for index, row in sub_df.iterrows():
+                # for each TF, get its target gene names on one chromosome
+                target_genes = list(set(sub_df.Gene))
+                ftrm = fTRM(tf, row.Region, targets=target_genes)
+                regulons.add_trm(ftrm)
+    return regulons
+
+
+# -------------------------------------------------------
+# MODEL:
+# -------------------------------------------------------
+@dataclass(frozen=True)
+class TrainingSequences:
+    """T"""
+    chrom: str
+    tf: str
+    encoded_sequences: list
+
+
+def get_training_data(tf, regulons: fRegulons, fragments: pd.DataFrame, genome: dict):
+    """
+
+    :param tf:
+    :param regulons:
+    :return:
+    """
+    training_dataset = {}
+    # for one TF only
+    tf_regulons = regulons[tf]  # a list
+    for trm in tf_regulons:
+        regions_reads = get_region_reads(fragments, trm.region.chrom, trm.region.start, trm.region.end)
+        training_seqs = list(
+            regions_reads.apply(lambda row: get_sequence(genome, row.chrom, row.start, row.end), axis=1))
+        # save data in a dictionary
+        # training_dataset[trm.chrom] = training_seqs
+        ts = TrainingSequences(chrom=trm.chrom, tf=trm.tf, encoded_sequences=training_seqs)
+        training_dataset[trm.chrom] = ts
+    return training_dataset
+
+
+def encode_sequence(seq) -> np.array:
     encoding = {'A': 0, 'C': 1, 'G': 2, 'T': 3, 'a': 0, 'c': 1, 'g': 2, 't': 3, 'N': 5, 'n': 5}
     return np.array([encoding[base] for base in seq])
 
 
-def encode_sequence(seq, vocab="ACGTatcgNn"):
-    encoding = {char: idx for idx, char in enumerate(vocab)}
-    return [encoding[base] for base in seq]
+def get_sequence(genome: dict, chrom: str, start: int, end: int) -> np.array:
+    seq = genome[chrom][start - 1:end]
+    encoded_seq = encode_sequence(seq)
+    return encoded_seq
+
+
+# def encode_sequence(seq, vocab="ACGTatcgNn"):
+#     encoding = {char: idx for idx, char in enumerate(vocab)}
+#     return [encoding[base] for base in seq]
 
 
 def sequence_to_counts(sequence, vocab_size=10):
@@ -151,6 +273,65 @@ def sequence_to_counts(sequence, vocab_size=10):
     for i, symbol in enumerate(sequence):
         counts[i, symbol] = 1
     return counts
+
+
+def train4tf(tf_training_dataset, chrom, n_states=5, n_iter=100, random_state=42):
+    """Train a HMM for one TF on each chromosome"""
+    encoded_training_sequences = tf_training_dataset[chrom].encoded_sequences
+    # Train HMM
+    model = hmm.MultinomialHMM(n_components=n_states, n_iter=n_iter, random_state=random_state)
+
+    # WRONG! TODO:
+    lengths = [len(seq) for seq in encoded_training_sequences]
+    X = np.concatenate(encoded_training_sequences).reshape(-1, 1)
+    model.fit(X, lengths)
+    return model
+
+
+def predict_region(model, chrom, genome, fragments, window_size=500, step=1, threshold=-800):
+    # ts = tf_training_dataset[chrom]
+    chrome_seq = genome[chrom]  # TODO
+    encoded_chrom = encode_sequence(chrome_seq)
+    # window_size = 500  # Length of binding region
+
+    print(f'Scaning chromosome {chrom}...')
+    start_time = time.time()
+    scores = []
+    for i in range(0, len(encoded_chrom) - window_size + 1, step):
+        window = encoded_chrom[i:i + window_size]
+        window_counts = sequence_to_counts(window)
+        score = model.score(window_counts)
+        scores.append((i, i + window_size, score))
+    end_time = time.time()
+    print(f'Done, used {round(end_time - start_time, 2)} seconds.')
+
+    # Filter and output potential binding sites
+    # threshold = -800  # Adjust threshold based on your data
+    predicted_sites = [(start, end) for start, end, score in scores if score > threshold]
+    print("Predicted binding sites:", predicted_sites)
+
+    # Or top 1%
+    scores_array = np.array([score for _, _, score in scores])
+    dynamic_threshold = np.percentile(scores_array, 99)  # Top 1% scores
+    predicted_sites = [(start, end) for start, end, score in scores if score > dynamic_threshold]
+    # predicted_sites: not right?
+    return predicted_sites
+
+
+# -------------------------------------------------------
+# OTHERS:
+# -------------------------------------------------------
+def create_parser():
+    parser = argparse.ArgumentParser(
+        prog='scmulti_hmm',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=True,
+    )
+    parser.add_argument('-o', '--output', help='output directory to save all the intermediate and final results.')
+    parser.add_argument('-s', '--scenic', help='scenic+ results pickle file name')
+    parser.add_argument('-f', '--fragments', help='scATAC-seq fragments.tsv.gz file name')
+    parser.add_argument('-g', '--genome', help='reference genome file name')
+    return parser
 
 
 def main():
@@ -161,70 +342,22 @@ def main():
     if not os.path.exists(args.output):
         os.makedirs(args.output)
 
-    scplus_obj = pickle.load(open(args.input, 'rb'))
-    meta_data = get_regions_meta(scplus_obj)
-    meta_tf = meta_data[meta_data.TF == 'LOC112142958']
-    meta_tf['Chromosome'] = meta_tf.Region.str.split(':', expand=True)[0]
-    print(meta_tf[meta_tf.chrom == 'NC_050513.1'])
-    tfs = list(set(meta_data.TF))
+    # reference genome
+    genome = read_fasta(args.genome)
+    # associated sequencing data: scRNA-seq, scATAC-seq, etc.
+    fragments = read_fragments(args.fragments)
+    # Scenic+ results
+    # meta_data = get_regulon_meta(args.scenic)
+    meta_data = read_regulon_meta(args.scenic)
+    TFS = list(set(meta_data.TF))
 
-    # states = tfs + ['null']  # n TFs + 1 None
-    # print(f'Using {len(states)} hidden states.')
+    # Parse fish Transcriptional regulatory modules (TRMs)
+    itemlist = handle_eRegulons_meta(meta_data)
+    with open(f'{args.output}/regulons.pkl', 'wb') as pickle_file:
+        pickle.dump(itemlist, pickle_file)
 
-    species_genome_fn = ''
-    genome = read_fasta(species_genome_fn)
+    # Create training sequences
 
 
 if __name__ == '__main__':
-    observations = ['Genes']  # m target genes in scRNA-seq data
-    start_probability = {'TF1': 0.5, 'TF2': 0.5}  # based on eRegulons of OM fish
-    transition_probability = {'TF1': {'TF1': 1, 'TF2': 0},
-                              'TF2': {'TF1': 0,
-                                      'TF2': 1}}  # state aka TF won't transfer to another TF, state never changes
-    emission_probability = {'TF1': {'Gene1': 0.7, 'Gene2': 0.3},
-                            'TF2': {'Gene1': 0.7, 'Gene2': 0.3}}  # adjacency value / importance
-
-    # 读取scRNA-seq数据
-    scrna_data_dir = '/dellfsqd2/ST_OCEAN/USER/liyao1/11.multi_modal/DATA/03.Oryzias_melastigma/04.annoted_scRNA'
-    scrna_data_fn = 'OM_liver_anno.h5ad'
-    rna_data = sc.read_h5ad(os.path.join(scrna_data_dir, scrna_data_fn))
-    # 假设数据集中有基因表达矩阵
-    gene_expression = rna_data.X
-    gene_names = rna_data.var_names
-
-    # 读取scATAC-seq数据
-    atac_data = sc.read_h5ad(
-        '/dellfsqd2/ST_OCEAN/USER/liyao1/11.multi_modal/exp/03.Oryzias_melastigma/02.label_transfer/liver/liver.merged.atac.h5ad')  # 请根据你的数据文件路径修改
-    # 假设数据集中包含列: cell_id, peak_id, accessibility
-    # 处理ATAC-seq数据，计算每个基因的平均可访问性
-    accessibility_df = atac_data.groupby('gene_id')['accessibility'].mean().reset_index()
-
-    # 结合表达和可访问性数据
-    # 创建一个DataFrame，包含每个基因的表达和可访问性
-    combined_df = pd.DataFrame({
-        'gene_id': gene_names,
-        'expression': gene_expression.mean(axis=0),  # 取平均值
-        'accessibility': accessibility_df['accessibility']
-    })
-
-    # 对数据进行标准化处理
-    from sklearn.preprocessing import StandardScaler
-
-    scaler = StandardScaler()
-    X = scaler.fit_transform(combined_df[['expression', 'accessibility']])
-
-    # 定义HMM模型
-    # 假设我们有两个隐藏状态，例如 'Active' 和 'Inactive'
-    model = hmm.GaussianHMM(n_components=2, covariance_type="diag", n_iter=100)
-
-    # 训练HMM模型
-    model.fit(X)
-
-    # 预测隐藏状态
-    hidden_states = model.predict(X)
-
-    # 将预测的状态添加到原始DataFrame中
-    combined_df['predicted_state'] = hidden_states
-
-    # 打印预测结果
-    print(combined_df[['gene_id', 'expression', 'accessibility', 'predicted_state']])
+    main()
