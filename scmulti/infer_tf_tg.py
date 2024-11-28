@@ -229,35 +229,3 @@ def handle_eRegulons_meta(eRegulons_meta: pd.DataFrame) -> fRegulons:
                 regulons.add_trm(ftrm)
     return regulons
 
-
-# -------------------------------------------------------
-# MODEL:
-# -------------------------------------------------------
-@dataclass(frozen=True)
-class TrainingSequences:
-    """T"""
-    tf: str
-    chrom: str
-    encoded_sequences: list
-
-
-def get_training_data(tf, regulons: fRegulons, fragments: pd.DataFrame, genome: dict) -> dict:
-    """
-
-    :param tf:
-    :param regulons:
-    :return:
-    """
-    training_dataset = {}
-    # for one TF only
-    tf_regulons = regulons[tf]  # a list
-    for trm in tf_regulons:
-        regions_reads = get_region_reads(fragments, trm.region.chrom, trm.region.start, trm.region.end)
-        training_seqs = list(
-            regions_reads.apply(lambda row: get_sequence(genome, row.chrom, row.start, row.end), axis=1)
-        )
-        # save data in a dictionary
-        # training_dataset[trm.chrom] = training_seqs
-        ts = TrainingSequences(chrom=trm.chrom, tf=trm.tf, encoded_sequences=training_seqs)
-        training_dataset[trm.chrom] = ts
-    return training_dataset
