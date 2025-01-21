@@ -4,12 +4,7 @@
 # @Author: Yao LI
 # @File: scmulti/infer_tf_tg.py
 # Use HMM to infer TFs and Target Genes relationship
-import os
-import sys
-from dataclasses import dataclass
-
 import pickle
-import argparse
 import pandas as pd
 
 
@@ -22,7 +17,7 @@ def read_fragments(fn) -> pd.DataFrame:
 
 
 def get_region_reads(fragments: pd.DataFrame, chrom: str, start: int, end: int) -> pd.DataFrame:
-    """Given an interested region, extract scATAC fragments mapped to the region"""
+    """Given an interested region, extract scATAC fragments mapped to the region"""  # TODO
     sub_df = fragments[fragments.chrom == chrom]
     regions_reads = sub_df[sub_df.start >= start]
     regions_reads = regions_reads[regions_reads.end <= end]
@@ -228,4 +223,3 @@ def handle_eRegulons_meta(eRegulons_meta: pd.DataFrame) -> fRegulons:
                 ftrm = fTRM(tf, row.Region, targets=target_genes)
                 regulons.add_trm(ftrm)
     return regulons
-
