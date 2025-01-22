@@ -18,6 +18,7 @@ import scanpy as sc
 import numpy as np
 import pyranges as pr
 import pandas as pd
+import anndata as an
 from typing import Optional, Union, List
 import subprocess
 
@@ -387,7 +388,7 @@ class ScMulti:
                    select_model=None,
                    return_model=True,
                    metrics=None,
-                   plot_metrics=False
+                   plot_metrics=True  # 2024-06-17
                    ):
         """
 
@@ -564,7 +565,8 @@ class ScMulti:
         with open(file_name, 'w') as file:
             file.write("#!/bin/bash\n\n")
             # Write the command to activate the conda en
-            file.write('source /dellfsqd2/ST_OCEAN/USER/liyao1/tools/anaconda3/bin/activate create_cistarget_databases\n\n')
+            file.write(
+                'source /dellfsqd2/ST_OCEAN/USER/liyao1/tools/anaconda3/bin/activate create_cistarget_databases\n\n')
             # Write the Python script execution command
             file.write(f"python {python_script} {python_args}\n\n")
             # Write the command to deactivate the conda environment
@@ -631,6 +633,13 @@ class ScMulti:
         if not os.path.exists(os.path.join(self.work_dir, 'motifs')):
             os.makedirs(os.path.join(self.work_dir, 'motifs'))
         region_sets = self.create_region_sets(chrom_header)
+
+        # 2024-06-18
+        print(custom_annotation)
+        print(self.rankings_db_fn)
+        print(self.scores_db_fn)
+        print(self.motif_annotation_fn)
+
         run_pycistarget(
             region_sets=region_sets,
             species=species,
@@ -641,7 +650,7 @@ class ScMulti:
             path_to_motif_annotations=self.motif_annotation_fn,
             run_without_promoters=True,
             n_cpu=1,  # n_cpu,  2024-03-07
-        )  #annotation_version="2024"
+        )  # annotation_version="2024"
 
     def network(self,
                 meta_cell_split=' ',
@@ -750,8 +759,9 @@ class ScMulti:
         # Visualization
         run_umap(self.cistopic_obj, target='cell', scale=True)
         plot_metadata(self.cistopic_obj, reduction_name='UMAP', variables=[self.variable],
-                      save=os.path.join(out_path, 'metadata1'))
-        plot_topic(self.cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(out_path, 'topic_plot1'))
+                      save=os.path.join(out_path, 'metadata1.pdf'))
+        plot_topic(self.cistopic_obj, reduction_name='UMAP', num_columns=4,
+                   save=os.path.join(out_path, 'topic_plot1.pdf'))
 
         # correct this kind of batch effects
         # Harmony
@@ -764,8 +774,9 @@ class ScMulti:
         # Plot again
         run_umap(self.cistopic_obj, target='cell', scale=True)
         plot_metadata(self.cistopic_obj, reduction_name='UMAP', variables=[self.variable],
-                      save=os.path.join(out_path, 'metadata'))
-        plot_topic(self.cistopic_obj, reduction_name='UMAP', num_columns=4, save=os.path.join(out_path, 'topic_plot'))
+                      save=os.path.join(out_path, 'metadata.pdf'))
+        plot_topic(self.cistopic_obj, reduction_name='UMAP', num_columns=4,
+                   save=os.path.join(out_path, 'topic_plot.pdf'))
 
         cell_topic_heatmap(self.cistopic_obj,
                            variables=[self.variable],
@@ -844,35 +855,13 @@ def create_menr(path):
     return menr
 
 
-# def match_key(scrna_data, scatac_data, scrna_key, scatac_key, group_key='celltype'):
-#     """
-#     For creating scenicplus object, ensure cell type column name is consistent between scrna data and cisobj
-#     :param scrna_data:
-#     :param scatac_data:
-#     :param scrna_key: cell type column name in scRNA data
-#     :param scatac_key: cell type column name in scATAC data
-#     :param group_key: cell type column name in cisobj data
-#     :return:
-#     """
-#     scrna_data.obs[group_key] = scrna_data.obs[scrna_key].copy()
-#     scatac_data.obs[group_key] = scatac_data.obs[scatac_key].copy()
-#
-#     scrna_data.obs[group_key] = scrna_data.obs[group_key].astype(str)
-#     scatac_data.obs[group_key] = scatac_data.obs[group_key].astype(str)
-#
-#     # Do not allow symbols other than _ exist in cell type name
-#     scrna_data.obs[group_key] = scrna_data.obs[group_key].str.replace("[^A-Za-z0-9]+", "_", regex=True)
-#     scatac_data.obs[group_key] = scatac_data.obs[group_key].str.replace("[^A-Za-z0-9]+", "_", regex=True)
-#
-#     return scrna_data, scatac_data
-
-
-def match_key(data, key, group_key='celltype', format_label=True):
+def match_key(data: an.AnnData, key, group_key='celltype', format_label=True) -> an.AnnData:
     """
     For creating scenicplus object, ensure cell type column name is consistent between scrna data and cisobj
     :param data:
     :param key: cell type column name in scRNA data
     :param group_key: cell type column name in cisobj data
+    :param format_label:
     :return:
     """
     data.obs[group_key] = data.obs[key].copy()
